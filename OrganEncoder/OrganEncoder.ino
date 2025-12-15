@@ -25,7 +25,7 @@ void loop() {
     uint8_t controlValue = (counter % 2 == 0) ? 127 : 0;
     uint8_t channel = 1 + (counter / 32); // yes, integer division
 
-    Serial.print("Sending CC {number: ");
+    Serial.print("Sending MIDI CC {number: ");
     Serial.print(controlNumber);
     Serial.print(", value: ");
     Serial.print(controlValue);
