@@ -12,6 +12,11 @@ constexpr int OUTPUT_ENABLE_PIN = 33;
 static const unsigned int B[] = {0x55555555, 0x33333333, 0x0F0F0F0F, 0x00FF00FF};
 static const unsigned int S[] = {1, 2, 4, 8};
 
+// This table is used to invert a sequence of 4 bits.
+static const unsigned char NIBBLE_REVERSE_LOOKUP[16] = {
+  0x0, 0x8, 0x4, 0xc, 0x2, 0xa, 0x6, 0xe, 0x1, 0x9, 0x5, 0xd, 0x3, 0xb, 0x7, 0xf,
+};
+
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial1, MIDI);
 
 elapsedMillis sinceLastStopStateFlush = 0;
@@ -68,18 +73,27 @@ void flushStopState() {
   // - 117, 117, 116, 116, 115, 115, ..., 102, 102, 117, 117, 116, 116, ..., 104, 104 (let's pretend 102, 102)
 
   // Interleaving choir and great stop states
-  unsigned long leftHalfStopState = interleaveBits(stopState[2], stopState[1]); // could remove named vars
+  unsigned long leftHalfStopState = interleaveBits(stopState[1], stopState[2]); // could remove named vars
   // Interleaving swell and pedal stop states
-  unsigned long rightHalfStopState = interleaveBits(stopState[0], stopState[3]); // could remove named vars
+  unsigned long rightHalfStopState = interleaveBits(stopState[3], stopState[0]); // could remove named vars
 
-  // TODO: Correct for our bad wiring (pins 4-7 on each group of 8 are reversed).
+  byte toWrite;
 
+  // Reverse the bottom nibble (4 bits) to compensate for our having reversed the order of pin outputs.
   for (int i = 0; i < 4; i++) {
-    shiftOut(DTA_PIN, CLK_PIN, MSBFIRST, rightHalfStopState >> (8 * i));
+    toWrite = 0xFF & (rightHalfStopState >> (8 * i));
+
+    // This table is used to invert a sequence of 4 bits.
+    toWrite = (0xF0 & toWrite) + NIBBLE_REVERSE_LOOKUP[toWrite & 0x0F];
+    shiftOut(DTA_PIN, CLK_PIN, LSBFIRST, toWrite);
   }
 
   for (int i = 0; i < 4; i++) {
-    shiftOut(DTA_PIN, CLK_PIN, MSBFIRST, leftHalfStopState >> (8 * i));
+    toWrite = 0xFF & (leftHalfStopState >> (8 * i));
+
+    // This table is used to invert a sequence of 4 bits.
+    toWrite = (0xF0 & toWrite) + NIBBLE_REVERSE_LOOKUP[toWrite & 0x0F];
+    shiftOut(DTA_PIN, CLK_PIN, LSBFIRST, toWrite);
   }
 
   digitalWrite(LATCH_PIN, HIGH);
