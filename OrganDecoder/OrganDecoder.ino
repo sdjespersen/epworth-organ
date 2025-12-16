@@ -73,25 +73,21 @@ void flushStopState() {
   // - 117, 117, 116, 116, 115, 115, ..., 102, 102, 117, 117, 116, 116, ..., 104, 104 (let's pretend 102, 102)
 
   // Interleaving choir and great stop states
-  unsigned long leftHalfStopState = interleaveBits(stopState[1], stopState[2]); // could remove named vars
+  unsigned long leftHalfStopState = interleaveBits(stopState[1], stopState[2]);
   // Interleaving swell and pedal stop states
-  unsigned long rightHalfStopState = interleaveBits(stopState[3], stopState[0]); // could remove named vars
+  unsigned long rightHalfStopState = interleaveBits(stopState[3], stopState[0]);
 
   byte toWrite;
 
   // Reverse the bottom nibble (4 bits) to compensate for our having reversed the order of pin outputs.
   for (int i = 0; i < 4; i++) {
     toWrite = 0xFF & (rightHalfStopState >> (8 * i));
-
-    // This table is used to invert a sequence of 4 bits.
     toWrite = (0xF0 & toWrite) + NIBBLE_REVERSE_LOOKUP[toWrite & 0x0F];
     shiftOut(DTA_PIN, CLK_PIN, LSBFIRST, toWrite);
   }
 
   for (int i = 0; i < 4; i++) {
     toWrite = 0xFF & (leftHalfStopState >> (8 * i));
-
-    // This table is used to invert a sequence of 4 bits.
     toWrite = (0xF0 & toWrite) + NIBBLE_REVERSE_LOOKUP[toWrite & 0x0F];
     shiftOut(DTA_PIN, CLK_PIN, LSBFIRST, toWrite);
   }
