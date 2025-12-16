@@ -1,5 +1,3 @@
-// Eventually this will be the decoder. For now it's a rough draft...
-
 #include <MIDI.h>
 
 constexpr int FLUSH_STOP_STATE_ITVL_MS = 2;
@@ -22,7 +20,7 @@ MIDI_CREATE_INSTANCE(HardwareSerial, Serial1, MIDI);
 elapsedMillis sinceLastStopStateFlush = 0;
 bool pendingStopChanges = false;
 
-// Each int stores 16 bits of stop state. Order: swell, great, choir, pedal
+// Each int stores 16 bits of stop state. Order: swell, great, choir, pedal.
 unsigned short stopState[4] = {0, 0, 0, 0};
 
 unsigned long interleaveBits(unsigned long a, unsigned long b) {
@@ -53,17 +51,11 @@ void handleControlChange(byte channel, byte controlNumber, byte controlValue) {
   Serial.println("}");
 
   // Channel 1: swell, 2: great, 3: choir, 4: pedal (not the order they appear on the panel!)
-  if (102 <= controlNumber && controlNumber <= 117 && 1 <= channel && channel <= 4) {
-    // This is a stop message
-    if (controlValue == 127) {  // "on"
-      bitWrite(stopState[channel-1], controlNumber - 102, 1);
-    } else if (controlValue == 0) {  // "off"
-      bitWrite(stopState[channel-1], controlNumber - 102, 0);
-    } else {
-      Serial.println("Ambiguous control value!");
-    }
-  }
 
+  // Handle stop tab messages.
+  if (102 <= controlNumber && controlNumber <= 117 && 1 <= channel && channel <= 4) {
+    bitWrite(stopState[channel-1], controlNumber - 102, controlValue > 63);
+  }
   pendingStopChanges = true;
 }
 
@@ -126,9 +118,8 @@ void setup() {
 }
 
 void loop() {
-  MIDI.read();
-
   // No need to check for incoming messages explicitly; they are handled by callbacks.
+  MIDI.read();
 
   if (pendingStopChanges && sinceLastStopStateFlush > FLUSH_STOP_STATE_ITVL_MS) {
     flushStopState();
