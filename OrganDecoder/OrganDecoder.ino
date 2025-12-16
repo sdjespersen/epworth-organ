@@ -112,14 +112,12 @@ void setup() {
   digitalWrite(CLK_PIN, LOW);
   digitalWrite(DTA_PIN, LOW);
   digitalWrite(LATCH_PIN, LOW);
+
   // OE is active low; here we are disabling until startup is done.
   digitalWrite(OUTPUT_ENABLE_PIN, HIGH);
 
   // Clear everything during startup
-  shiftOut(DTA_PIN, CLK_PIN, MSBFIRST, 0);
-  shiftOut(DTA_PIN, CLK_PIN, MSBFIRST, 0);
-  digitalWrite(LATCH_PIN, HIGH);
-  digitalWrite(LATCH_PIN, LOW);
+  flushStopState();
 
   MIDI.setHandleControlChange(handleControlChange);
 
