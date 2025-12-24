@@ -5,14 +5,11 @@
 #include <MCP23017.h>
 
 
-// To save on CPU cycles, don't poll the stop tab buttons too often. We could keep adjusting this
+// To save on CPU cycles, don't poll the stop tab keys too often. We could keep adjusting this
 // number upward as long as we don't drop any key presses.
-constexpr uint8_t STOP_TAB_BUTTON_POLL_ITVL_MICROS = 500;
+constexpr uint8_t STOP_TAB_KEY_POLL_ITVL_MICROS = 500;
 
 constexpr uint8_t N_DEBOUNCE_STEPS_STOP_TABS = 5;
-
-constexpr int BUTTON_PINS[4] = {0, 1, 2, 3};
-constexpr int LED_PINS[4] = {8, 9, 10, 11};
 
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial1, MIDI);
 
@@ -36,6 +33,7 @@ uint16_t stopTabKeyReadings[4][N_DEBOUNCE_STEPS_STOP_TABS] = {
   {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF},
   {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF},
 };
+uint8_t stopTabPollCtr = 0;
 uint16_t debouncedState[4] = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
 uint16_t stopState[4] = {0, 0, 0, 0};
 
@@ -65,25 +63,22 @@ void stopTabKeyPressed(uint8_t division, uint8_t button) {
 
 void pollStopTabKeys() {
   for (uint8_t i = 0; i < 4; i++) {
-    // Drop oldest history entry; record current as newest.
-    for (uint8_t h = N_DEBOUNCE_STEPS_STOP_TABS - 1; h > 0; h--) {
-      stopTabKeyReadings[i][h] = stopTabKeyReadings[i][h-1];
-    }
-    stopTabKeyReadings[i][0] = 0;
+    // Overwrite oldest history entry with current.
+    stopTabKeyReadings[i][stopTabPollCtr] = 0;
 
     // TODO: Determine whether pin GPA7/GPB7 is the MSB or LSB! It matters greatly! The
     // current implementation assumes it is the LSB.
 
     // For the first chip of every pair, need to read both ports, as button 8 is routed
     // to GPA0, though buttons 1-7 are on GPB0-6.
-    stopTabKeyReadings[i][0] |= stopTabMcps[i][0].readPort(MCP23017Port::B) & 0xFE;
-    stopTabKeyReadings[i][0] |= stopTabMcps[i][0].readPort(MCP23017Port::A) & 0x01;
-    stopTabKeyReadings[i][0] <<= 8;
+    stopTabKeyReadings[i][stopTabPollCtr] |= stopTabMcps[i][0].readPort(MCP23017Port::B) & 0xFE;
+    stopTabKeyReadings[i][stopTabPollCtr] |= stopTabMcps[i][0].readPort(MCP23017Port::A) & 0x01;
+    stopTabKeyReadings[i][stopTabPollCtr] <<= 8;
     // For the second chip of every pair, only need to read port B, ignoring last pin, since
     // there are only 7 buttons hooked up to this one (GPB0-6).
-    stopTabKeyReadings[i][0] |= stopTabMcps[i][1].readPort(MCP23017Port::B) & 0xFE;
+    stopTabKeyReadings[i][stopTabPollCtr] |= stopTabMcps[i][1].readPort(MCP23017Port::B) & 0xFE;
     // By convention, LSB needs to be 1 to represent the imaginary 16th button, never pressed.
-    stopTabKeyReadings[i][0] |= 0x0001;
+    stopTabKeyReadings[i][stopTabPollCtr] |= 0x0001;
 
     // Run through history, compute stable state. At the end of this loop, a 1 in position i of
     // stableHigh means that the reading at position i has been 1 at every step in recorded
@@ -103,6 +98,7 @@ void pollStopTabKeys() {
     fallingEdges >>= 1;
     for (uint8_t j = 14; j >= 0; j--) {
       if (fallingEdges & 0x0001) {
+        // TODO: Separate concerns better. This function shouldn't be known about in this context.
         stopTabKeyPressed(i, j);
       }
       fallingEdges >>= 1;
@@ -112,6 +108,7 @@ void pollStopTabKeys() {
     debouncedState[i] |= stableHigh;
     debouncedState[i] &= stableLow;
   }
+  stopTabPollCtr = (stopTabPollCtr + 1) % N_DEBOUNCE_STEPS_STOP_TABS;
 }
 
 void setup() {
@@ -137,7 +134,7 @@ void setup() {
 }
 
 void loop() {
-  if (sinceLastStopTabKeyScan > STOP_TAB_BUTTON_POLL_ITVL_MICROS) {
+  if (sinceLastStopTabKeyScan > STOP_TAB_KEY_POLL_ITVL_MICROS) {
     pollStopTabKeys();
   }
 }
