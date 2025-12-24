@@ -30,7 +30,7 @@ MCP23017 stopTabMcps[4][2] = {
 // "natural" initial state is all 1s. Note however that each bank has *15* buttons,
 // not 16, so we hereby decree that the LSB of will always be 1 by convention. Any
 // other code that detects key presses must take care to assume this.
-uint16_t stopTabButtonReadings[4][N_DEBOUNCE_STEPS_STOP_TABS] = {
+uint16_t stopTabKeyReadings[4][N_DEBOUNCE_STEPS_STOP_TABS] = {
   {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF},
   {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF},
   {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF},
@@ -39,9 +39,9 @@ uint16_t stopTabButtonReadings[4][N_DEBOUNCE_STEPS_STOP_TABS] = {
 uint16_t debouncedState[4] = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
 uint16_t stopState[4] = {0, 0, 0, 0};
 
-elapsedMicros sinceLastStopTabButtonScan = 0;
+elapsedMicros sinceLastStopTabKeyScan = 0;
 
-void stopTabButtonPressed(uint8_t division, uint8_t button) {
+void stopTabKeyPressed(uint8_t division, uint8_t button) {
   // Button j, division i was pressed...
   // TODO: Take meaningful action in this condition (emit MIDI, toggle stop state)
   Serial.print("We have a falling edge for division ");
@@ -63,27 +63,27 @@ void stopTabButtonPressed(uint8_t division, uint8_t button) {
   // MIDI.sendControlChange(controlNumber, controlValue, division);
 }
 
-void pollStopTabButtons() {
+void pollStopTabKeys() {
   for (uint8_t i = 0; i < 4; i++) {
     // Drop oldest history entry; record current as newest.
     for (uint8_t h = N_DEBOUNCE_STEPS_STOP_TABS - 1; h > 0; h--) {
-      stopTabButtonReadings[i][h] = stopTabButtonReadings[i][h-1];
+      stopTabKeyReadings[i][h] = stopTabKeyReadings[i][h-1];
     }
-    stopTabButtonReadings[i][0] = 0;
+    stopTabKeyReadings[i][0] = 0;
 
     // TODO: Determine whether pin GPA7/GPB7 is the MSB or LSB! It matters greatly! The
     // current implementation assumes it is the LSB.
 
     // For the first chip of every pair, need to read both ports, as button 8 is routed
     // to GPA0, though buttons 1-7 are on GPB0-6.
-    stopTabButtonReadings[i][0] |= stopTabMcps[i][0].readPort(MCP23017Port::B) & 0xFE;
-    stopTabButtonReadings[i][0] |= stopTabMcps[i][0].readPort(MCP23017Port::A) & 0x01;
-    stopTabButtonReadings[i][0] <<= 8;
+    stopTabKeyReadings[i][0] |= stopTabMcps[i][0].readPort(MCP23017Port::B) & 0xFE;
+    stopTabKeyReadings[i][0] |= stopTabMcps[i][0].readPort(MCP23017Port::A) & 0x01;
+    stopTabKeyReadings[i][0] <<= 8;
     // For the second chip of every pair, only need to read port B, ignoring last pin, since
     // there are only 7 buttons hooked up to this one (GPB0-6).
-    stopTabButtonReadings[i][0] |= stopTabMcps[i][1].readPort(MCP23017Port::B) & 0xFE;
+    stopTabKeyReadings[i][0] |= stopTabMcps[i][1].readPort(MCP23017Port::B) & 0xFE;
     // By convention, LSB needs to be 1 to represent the imaginary 16th button, never pressed.
-    stopTabButtonReadings[i][0] |= 0x0001;
+    stopTabKeyReadings[i][0] |= 0x0001;
 
     // Run through history, compute stable state. At the end of this loop, a 1 in position i of
     // stableHigh means that the reading at position i has been 1 at every step in recorded
@@ -92,8 +92,8 @@ void pollStopTabButtons() {
     uint16_t stableHigh = 0xFFFF;
     uint16_t stableLow = 0;
     for (uint8_t h = 0; h < N_DEBOUNCE_STEPS_STOP_TABS; h++) {
-      stableHigh &= stopTabButtonReadings[i][h];
-      stableLow |= stopTabButtonReadings[i][h];
+      stableHigh &= stopTabKeyReadings[i][h];
+      stableLow |= stopTabKeyReadings[i][h];
     }
 
     // Iterate over the falling edge bits. Each 1 here represents a button press, where the
@@ -103,7 +103,7 @@ void pollStopTabButtons() {
     fallingEdges >>= 1;
     for (uint8_t j = 14; j >= 0; j--) {
       if (fallingEdges & 0x0001) {
-        stopTabButtonPressed(i, j);
+        stopTabKeyPressed(i, j);
       }
       fallingEdges >>= 1;
     }
@@ -137,7 +137,7 @@ void setup() {
 }
 
 void loop() {
-  if (sinceLastStopTabButtonScan > STOP_TAB_BUTTON_POLL_ITVL_MICROS) {
-    pollStopTabButtons();
+  if (sinceLastStopTabKeyScan > STOP_TAB_BUTTON_POLL_ITVL_MICROS) {
+    pollStopTabKeys();
   }
 }
