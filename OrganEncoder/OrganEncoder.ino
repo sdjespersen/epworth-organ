@@ -7,7 +7,7 @@
 
 // To save on CPU cycles, don't poll the stop tab keys too often. We could keep adjusting this
 // number upward as long as we don't drop any key presses.
-constexpr uint8_t STOP_TAB_KEY_POLL_ITVL_MICROS = 500;
+constexpr int STOP_TAB_KEY_POLL_ITVL_MICROS = 2000;
 
 constexpr uint8_t N_DEBOUNCE_STEPS_STOP_TABS = 5;
 
@@ -71,12 +71,14 @@ void pollStopTabKeys() {
 
     // For the first chip of every pair, need to read both ports, as button 8 is routed
     // to GPA0, though buttons 1-7 are on GPB0-6.
-    stopTabKeyReadings[i][stopTabPollCtr] |= stopTabMcps[i][0].readPort(MCP23017Port::B) & 0xFE;
+    stopTabKeyReadings[i][stopTabPollCtr] |= stopTabMcps[i][0].readPort(MCP23017Port::B) & 0x7F;
+    stopTabKeyReadings[i][stopTabPollCtr] <<= 1;
     stopTabKeyReadings[i][stopTabPollCtr] |= stopTabMcps[i][0].readPort(MCP23017Port::A) & 0x01;
-    stopTabKeyReadings[i][stopTabPollCtr] <<= 8;
+    stopTabKeyReadings[i][stopTabPollCtr] <<= 7;
     // For the second chip of every pair, only need to read port B, ignoring last pin, since
     // there are only 7 buttons hooked up to this one (GPB0-6).
-    stopTabKeyReadings[i][stopTabPollCtr] |= stopTabMcps[i][1].readPort(MCP23017Port::B) & 0xFE;
+    stopTabKeyReadings[i][stopTabPollCtr] |= stopTabMcps[i][1].readPort(MCP23017Port::B) & 0x7F;
+    stopTabKeyReadings[i][stopTabPollCtr] <<= 1;
     // By convention, LSB needs to be 1 to represent the imaginary 16th button, never pressed.
     stopTabKeyReadings[i][stopTabPollCtr] |= 0x0001;
 
@@ -96,10 +98,10 @@ void pollStopTabKeys() {
     uint16_t fallingEdges = (debouncedState[i] & ~stableLow);
     // Do one bit shift before we start reading so that we ignore the meaningless LSB.
     fallingEdges >>= 1;
-    for (uint8_t j = 14; j >= 0; j--) {
+    for (uint8_t j = 0; j < 15; j++) {
       if (fallingEdges & 0x0001) {
         // TODO: Separate concerns better. This function shouldn't be known about in this context.
-        stopTabKeyPressed(i, j);
+        stopTabKeyPressed(i, 14 - j);
       }
       fallingEdges >>= 1;
     }
@@ -124,8 +126,8 @@ void setup() {
       stopTabMcps[i][j].init();
       stopTabMcps[i][j].portMode(MCP23017Port::A, 0b10000000);
       stopTabMcps[i][j].portMode(MCP23017Port::B, 0b11111110);
-      stopTabMcps[i][j].writeRegister(MCP23017Register::GPIO_A, 0x00);
-      stopTabMcps[i][j].writeRegister(MCP23017Register::GPIO_B, 0x00);
+      stopTabMcps[i][j].writeRegister(MCP23017Register::GPIO_A, 0x7F);
+      stopTabMcps[i][j].writeRegister(MCP23017Register::GPIO_B, 0x01);
     }
   }
 
@@ -136,5 +138,6 @@ void setup() {
 void loop() {
   if (sinceLastStopTabKeyScan > STOP_TAB_KEY_POLL_ITVL_MICROS) {
     pollStopTabKeys();
+    sinceLastStopTabKeyScan = 0;
   }
 }
