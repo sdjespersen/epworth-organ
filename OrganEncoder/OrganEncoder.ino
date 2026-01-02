@@ -10,12 +10,18 @@
 #include <Wire.h>
 #include <MCP23017.h>
 
+constexpr uint8_t PISTON_LOAD_PIN = 10;
+constexpr uint8_t PISTON_DATA_PIN = 9;
+constexpr uint8_t PISTON_CLOCK_PIN = 8;
+
 
 // To save on CPU cycles, don't poll the stop tab keys too often. We could keep adjusting this
 // number upward as long as we don't drop any key presses.
 constexpr uint16_t STOP_TAB_KEY_POLL_ITVL_MICROS = 1500;
+constexpr uint16_t PISTON_POLL_ITVL_MICROS = 2500;
 
 constexpr uint8_t N_DEBOUNCE_STEPS_STOP_TABS = 5;
+constexpr uint8_t N_DEBOUNCE_STEPS_PISTONS = 5;
 
 
 MCP23017 stopTabMcps[4][2] = {
@@ -37,25 +43,41 @@ uint16_t stopTabKeyReadings[4][N_DEBOUNCE_STEPS_STOP_TABS] = {
   {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF},
 };
 uint8_t stopTabPollCtr = 0;
-uint16_t debouncedState[4] = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
+uint16_t debouncedStopTabKeyState[4] = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
 uint16_t stopState[4] = {0, 0, 0, 0};
 
+uint8_t pistonReadings[N_DEBOUNCE_STEPS_PISTONS] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+uint8_t pistonPollCtr = 0;
+uint8_t debouncedPistonState = 0xFF;
+
 unsigned long int lastStopTabKeyScan = 0;
+unsigned long int lastPistonScan = 0;
 unsigned long int now = 0;
+
+bool awaitingSavePreset = 0;
+
+// TODO: Put these in EEPROM.
+uint16_t presets[8][4] = {
+  {0, 0, 0, 0},
+  {0, 0, 0, 0},
+  {0, 0, 0, 0},
+  {0, 0, 0, 0},
+  {0, 0, 0, 0},
+  {0, 0, 0, 0},
+  {0, 0, 0, 0},
+  {0, 0, 0, 0},
+};
 
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial1, MIDI);
 
 uint16_t reverseByte(uint16_t b) {
-   b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
-   b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
-   b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
-   return b;
+  b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
+  b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
+  b = (b & 0xAA) >> 1 | (b & 0x55) << 1;
+  return b;
 }
 
-void stopTabKeyPressed(uint8_t division, uint8_t button) {
-  uint16_t stopMask = 1 << (15 - button);
-  stopState[division] ^= stopMask;
-
+void writeStopStateToLeds(uint8_t division) {
   // The schematic makes this clear, but it may be counterintuitive: Because of the pin layout on
   // the MCP23017, the LEDs are effectively in reverse order from the switches. That is, although
   // GPA1 -> D1 ... GPA7 -> D7, we actually have GPB0 -> Sw7In ... GPB6 -> Sw1In. Ergo, because the
@@ -65,9 +87,16 @@ void stopTabKeyPressed(uint8_t division, uint8_t button) {
   uint8_t leftHalf = reverseByte(~stopState[division] >> 8);
   uint8_t rightHalf = reverseByte(~stopState[division] & 0xFF);
 
-  stopTabMcps[division][0].writePort(MCP23017Port::A, (leftHalf & 0x7F) << 1); // LSB is input
-  stopTabMcps[division][0].writePort(MCP23017Port::B, leftHalf & 0x80); // MSB only; rest are inputs
-  stopTabMcps[division][1].writePort(MCP23017Port::A, rightHalf & 0x7F); // MSB is not connected
+  stopTabMcps[division][0].writePort(MCP23017Port::A, (leftHalf & 0x7F) << 1);  // LSB is input
+  stopTabMcps[division][0].writePort(MCP23017Port::B, leftHalf & 0x80);         // MSB only; rest are inputs
+  stopTabMcps[division][1].writePort(MCP23017Port::A, rightHalf & 0x7F);        // MSB is not connected
+}
+
+void stopTabKeyPressed(uint8_t division, uint8_t button) {
+  uint16_t stopMask = 1 << (15 - button);
+  stopState[division] ^= stopMask;
+
+  writeStopStateToLeds(division);
 
   uint8_t controlNumber = 102 + button;
   uint8_t controlValue = stopState[division] & stopMask ? 127 : 0;
@@ -112,7 +141,7 @@ void pollStopTabKeys() {
 
     // Iterate over the falling edge bits. Each 1 here represents a button press, where the
     // current debounced state is 1 (high) and the last several readings have been 0 (low).
-    uint16_t fallingEdges = (debouncedState[i] & ~stableLow);
+    uint16_t fallingEdges = (debouncedStopTabKeyState[i] & ~stableLow);
     // Do one bit shift before we start reading so that we ignore the meaningless LSB.
     fallingEdges >>= 1;
     for (uint8_t j = 0; j < 15; j++) {
@@ -124,10 +153,113 @@ void pollStopTabKeys() {
     }
 
     // Finally, update the debounced state.
-    debouncedState[i] |= stableHigh;
-    debouncedState[i] &= stableLow;
+    debouncedStopTabKeyState[i] |= stableHigh;
+    debouncedStopTabKeyState[i] &= stableLow;
   }
   stopTabPollCtr = (stopTabPollCtr + 1) % N_DEBOUNCE_STEPS_STOP_TABS;
+}
+
+void emitStopState() {
+  for (uint8_t i = 0; i < 4; i++) {
+    for (uint8_t j = 0; j < 15; j++) {
+      uint16_t bitMask = 1 << (15 - j);
+      uint8_t controlValue = (stopState[i] & bitMask) ? 127 : 0;
+      MIDI.sendControlChange(102 + j, controlValue, i + 1);
+    }
+  }
+}
+
+void generalCancel() {
+  // Clear stop state internally
+  for (uint8_t i = 0; i < 4; i++) {
+    stopState[i] = 0;
+    writeStopStateToLeds(i);
+  }
+  // Clear stop state "externally"
+  emitStopState();
+}
+
+void pistonPressed(uint8_t i) {
+  if (i == 0) {
+    // piston 0 is "save" button
+    awaitingSavePreset = true;
+  } else if (i == 1) {
+    // piston 1 is "GC" button
+    generalCancel();
+  } else {
+    // the rest are presets
+    if (awaitingSavePreset) {
+      for (uint8_t j = 0; j < 4; j++) {
+        presets[i][j] = stopState[j];
+      }
+    } else {
+      for (uint8_t j = 0; j < 4; j++) {
+        stopState[j] = presets[i][j];
+        writeStopStateToLeds(j);
+      }
+      emitStopState();
+    }
+  }
+}
+
+void pistonReleased(uint8_t i) {
+  // The only piston we really care about when released is the "save" button.
+  if (i == 0) {
+    awaitingSavePreset = false;
+  }
+}
+
+void pollPistons() {
+  // Load button state into the 74HC165 with a pulse.
+  digitalWrite(PISTON_LOAD_PIN, LOW);
+  digitalWrite(PISTON_LOAD_PIN, HIGH);
+
+  // Overwrite oldest history entry with current.
+  pistonReadings[pistonPollCtr] = 0;
+  // Ensure clock pin low first...
+  digitalWrite(PISTON_CLOCK_PIN, LOW);
+  // ...then clock the data into the piston readings. We do this manually because the arduino
+  // shiftIn implementation pulses the clock *before* reading, which is the wrong order for the
+  // 74HC165N.
+  for (uint8_t i = 0; i < 8; i++) {
+    pistonReadings[pistonPollCtr] |= (digitalRead(PISTON_DATA_PIN) << i);
+    digitalWrite(PISTON_CLOCK_PIN, HIGH);
+    digitalWrite(PISTON_CLOCK_PIN, LOW);
+  }
+
+  // Run through history, compute stable state. At the end of this loop, a 1 in position i of
+  // stableHigh means that the reading at position i has been 1 at every step in recorded
+  // history, and a 0 in position i of stableLow means that the reading at position i has been
+  // 0 at every step. The other 2 possibilities are noisy, and hence ignored.
+  uint8_t stableHigh = 0xFF;
+  uint8_t stableLow = 0;
+  for (uint8_t h = 0; h < N_DEBOUNCE_STEPS_PISTONS; h++) {
+    stableHigh &= pistonReadings[h];
+    stableLow |= pistonReadings[h];
+  }
+
+  // Iterate over the falling edge bits. Each 1 here represents a button press, where the
+  // current debounced state is 1 (high) and the last several readings have been 0 (low).
+  uint8_t fallingEdges = (debouncedPistonState & ~stableLow);
+  for (uint8_t j = 0; j < 8; j++) {
+    if (fallingEdges & 0x01) {
+      pistonPressed(j);
+    }
+    fallingEdges >>= 1;
+  }
+  uint8_t risingEdges = (~debouncedPistonState & stableHigh);
+  for (uint8_t j = 0; j < 8; j++) {
+    if (risingEdges & 0x01) {
+      pistonReleased(j);
+    }
+    risingEdges >>= 1;
+  }
+
+  // Finally, update the debounced state.
+  debouncedPistonState |= stableHigh;
+  debouncedPistonState &= stableLow;
+
+  pistonPollCtr = (pistonPollCtr + 1) % N_DEBOUNCE_STEPS_PISTONS;
 }
 
 void setup() {
@@ -148,6 +280,13 @@ void setup() {
     }
   }
 
+  // Set up initial state for 74HC165 shift register that reads pistons
+  pinMode(PISTON_LOAD_PIN, OUTPUT);
+  pinMode(PISTON_CLOCK_PIN, OUTPUT);
+  pinMode(PISTON_DATA_PIN, INPUT_PULLUP);
+  digitalWrite(PISTON_LOAD_PIN, HIGH);
+  digitalWrite(PISTON_CLOCK_PIN, LOW);
+
   MIDI.begin(MIDI_CHANNEL_OMNI);
 }
 
@@ -156,6 +295,12 @@ void loop() {
   if (now - lastStopTabKeyScan > STOP_TAB_KEY_POLL_ITVL_MICROS) {
     pollStopTabKeys();
     lastStopTabKeyScan = now;
+  }
+
+  now = micros();
+  if (now - lastPistonScan > PISTON_POLL_ITVL_MICROS) {
+    pollPistons();
+    lastPistonScan = now;
   }
 
   // MIDI Controllers should discard incoming MIDI messages.
