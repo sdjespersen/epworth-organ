@@ -6,6 +6,7 @@
  * toe spades, etc.).
  */
 
+#include <MIDI.h>
 #include <Wire.h>
 #include <MCP23017.h>
 
@@ -41,6 +42,8 @@ uint16_t stopState[4] = {0, 0, 0, 0};
 
 elapsedMicros sinceLastStopTabKeyScan = 0;
 
+MIDI_CREATE_INSTANCE(HardwareSerial, Serial1, MIDI);
+
 uint16_t reverseByte(uint16_t b) {
    b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
    b = (b & 0xCC) >> 2 | (b & 0x33) << 2;
@@ -68,7 +71,11 @@ void stopTabKeyPressed(uint8_t division, uint8_t button) {
   uint8_t controlNumber = 102 + button;
   uint8_t controlValue = stopState[division] & stopMask ? 127 : 0;
 
-  usbMIDI.sendControlChange(controlNumber, controlValue, division);
+  // Humans talk about MIDI channels 1-16. I would have expected computers to speak of MIDI
+  // channels 0-15, but the library we're using does not do this; it expects 1-16. Hence the +1.
+  uint8_t channel = division + 1;
+
+  MIDI.sendControlChange(controlNumber, controlValue, channel);
 }
 
 void pollStopTabKeys() {
@@ -139,6 +146,8 @@ void setup() {
       stopTabMcps[i][j].writeRegister(MCP23017Register::GPIO_B, 0x80);
     }
   }
+
+  MIDI.begin(MIDI_CHANNEL_OMNI);
 }
 
 void loop() {
@@ -148,6 +157,6 @@ void loop() {
   }
 
   // MIDI Controllers should discard incoming MIDI messages.
-  while (usbMIDI.read()) {
+  while (MIDI.read()) {
   }
 }
