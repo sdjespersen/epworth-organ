@@ -40,7 +40,8 @@ uint8_t stopTabPollCtr = 0;
 uint16_t debouncedState[4] = {0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF};
 uint16_t stopState[4] = {0, 0, 0, 0};
 
-elapsedMicros sinceLastStopTabKeyScan = 0;
+unsigned long int lastStopTabKeyScan = 0;
+unsigned long int now = 0;
 
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial1, MIDI);
 
@@ -151,9 +152,10 @@ void setup() {
 }
 
 void loop() {
-  if (sinceLastStopTabKeyScan > STOP_TAB_KEY_POLL_ITVL_MICROS) {
+  now = micros();
+  if (now - lastStopTabKeyScan > STOP_TAB_KEY_POLL_ITVL_MICROS) {
     pollStopTabKeys();
-    sinceLastStopTabKeyScan = 0;
+    lastStopTabKeyScan = now;
   }
 
   // MIDI Controllers should discard incoming MIDI messages.

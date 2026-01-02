@@ -41,15 +41,6 @@ unsigned long interleaveBits(unsigned long a, unsigned long b) {
 }
 
 void handleControlChange(byte channel, byte controlNumber, byte controlValue) {
-  // For diagnostics, also print out that we received a message.
-  Serial.print("Received MIDI CC: {channel: ");
-  Serial.print(channel);
-  Serial.print(", controlNumber: ");
-  Serial.print(controlNumber);
-  Serial.print(", controlValue: ");
-  Serial.print(controlValue);
-  Serial.println("}");
-
   // Channel 1: swell, 2: great, 3: choir, 4: pedal (not the order they appear on the panel!)
 
   // Handle stop tab messages.
@@ -113,8 +104,6 @@ void setup() {
 
   // Setup done; enable outputs.
   digitalWrite(OUTPUT_ENABLE_PIN, LOW);
-
-  Serial.begin(9600);
 }
 
 void loop() {
