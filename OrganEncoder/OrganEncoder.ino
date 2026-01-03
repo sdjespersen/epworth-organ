@@ -13,6 +13,7 @@
 constexpr uint8_t PISTON_LOAD_PIN = 10;
 constexpr uint8_t PISTON_DATA_PIN = 9;
 constexpr uint8_t PISTON_CLOCK_PIN = 8;
+constexpr uint8_t CRESCENDO_WIPER_PIN = 21;
 
 // To save on CPU cycles, don't poll the stop tab keys too often. We could keep adjusting this
 // number upward as long as we don't drop any key presses.
@@ -28,6 +29,7 @@ MCP23017 stopTabMcps[4][2] = {
 };
 
 uint16_t stopState[4] = {0, 0, 0, 0};
+uint8_t crescendoPedalState = 0;
 bool awaitingSavePreset = false;
 
 // TODO: Put these in EEPROM.
@@ -279,6 +281,7 @@ void setup() {
 
 uint32_t lastStopTabKeyScan = 0;
 uint32_t lastPistonScan = 0;
+uint32_t lastCrescendoPistonScan = 0;
 uint32_t now = 0;
 
 void loop() {
@@ -314,6 +317,20 @@ void loop() {
     pistonDebouncer.forEachRisingEdge([](int i) {
       onPistonReleased(i);
     });
+  }
+
+  // Scan crescendo pin;
+  now = micros();
+  if (now - lastCrescendoPistonScan > 5000) {
+    lastCrescendoPistonScan = now;
+    // Drop 2 LSB to get down to 8 bits.
+    uint8_t rawCrescendoReading = analogRead(CRESCENDO_WIPER_PIN) >> 2;
+    uint8_t smoothedCrescendoPedalState = (7 * crescendoPedalState + rawCrescendoReading) / 8;
+    if (smoothedCrescendoPedalState != crescendoPedalState) {
+      // I guess this is different enough to emit?
+      crescendoPedalState = smoothedCrescendoPedalState;
+      MIDI.sendControlChange(11, crescendoPedalState >> 1, 5);
+    }
   }
 
   // MIDI Controllers should discard incoming MIDI messages.
