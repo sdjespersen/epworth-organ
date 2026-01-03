@@ -109,11 +109,13 @@ public:
 private:
   template<typename AcceptsUint8>
   void applyToMaskBits(T mask, AcceptsUint8 userFn) {
-    for (uint8_t idx = 0; idx < (int)(sizeof(T) * 8); idx++) {
-      if (mask & 1) {
-        userFn(idx);
-      }
-      mask >>= 1;
+    while (mask != 0) {
+      // Fancy compiler builtins...
+      int i = __builtin_ctz(mask);
+      userFn(i);
+
+      // Clear the bit we just processed so we can find the next one
+      mask &= ~(static_cast<T>(1) << i);
     }
   }
 };
