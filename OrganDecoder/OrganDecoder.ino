@@ -107,8 +107,8 @@ void handleControlChange(byte channel, byte controlNumber, byte controlValue) {
 
   // Handle crescendo pedal messages
   if (controlNumber == 11 && channel == 5) {
-    // map it down to 0-38 (divide by 3.28)
-    uint8_t crescStep = static_cast<uint8_t>(std::round(controlValue / 3.28));
+    // map it down to 0-38 (divide by 3.34)
+    uint8_t crescStep = static_cast<uint8_t>(std::round(controlValue / 3.34));
     for (int div = 0; div < 4; div++) {
       crescendoInducedStopState[div] = CRESCENDO_INDUCED_STATES[crescStep][div];
     }
