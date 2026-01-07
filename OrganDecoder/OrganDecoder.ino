@@ -2,10 +2,10 @@
 
 constexpr int FLUSH_STOP_STATE_ITVL_MS = 2;
 
-constexpr int CLK_PIN = 17;
-constexpr int DTA_PIN = 18;
-constexpr int LATCH_PIN = 19;
-constexpr int OUTPUT_ENABLE_PIN = 33;
+constexpr int CLK_PIN = 4;
+constexpr int DTA_PIN = 2;
+constexpr int LATCH_PIN = 3;
+constexpr int OUTPUT_ENABLE_PIN = 5;
 
 static const uint32_t B[] = {0x55555555, 0x33333333, 0x0F0F0F0F, 0x00FF00FF};
 static const uint32_t S[] = {1, 2, 4, 8};
@@ -70,9 +70,9 @@ uint16_t CRESCENDO_INDUCED_STATES[39][4] = {0};
 //   generateCrescendoInducedStates()
 // };
 
-MIDI_CREATE_INSTANCE(HardwareSerial, Serial1, MIDI);
+MIDI_CREATE_DEFAULT_INSTANCE();
 
-elapsedMillis sinceLastStopStateFlush = 0;
+uint16_t lastStopStateFlush = 0;
 bool pendingStopChanges = false;
 
 // Each int stores 16 bits of stop state. Order: swell, great, choir, pedal.
@@ -107,8 +107,8 @@ void handleControlChange(byte channel, byte controlNumber, byte controlValue) {
 
   // Handle crescendo pedal messages
   if (controlNumber == 11 && channel == 5) {
-    // map it down to 0-38 (divide by 3.34)
-    uint8_t crescStep = static_cast<uint8_t>(std::round(controlValue / 3.34));
+    // map it down to 0-38
+    uint8_t crescStep = controlValue * 3 / 10;
     for (int div = 0; div < 4; div++) {
       crescendoInducedStopState[div] = CRESCENDO_INDUCED_STATES[crescStep][div];
     }
@@ -149,7 +149,6 @@ void flushStopState() {
   digitalWrite(LATCH_PIN, HIGH);
   digitalWrite(LATCH_PIN, LOW);
 
-  sinceLastStopStateFlush = 0;
   pendingStopChanges = false;
 }
 
@@ -189,7 +188,9 @@ void loop() {
   // No need to check for incoming messages explicitly; they are handled by callbacks.
   MIDI.read();
 
-  if (pendingStopChanges && sinceLastStopStateFlush > FLUSH_STOP_STATE_ITVL_MS) {
+  uint16_t now = millis();
+  if (pendingStopChanges && (now - lastStopStateFlush)  > FLUSH_STOP_STATE_ITVL_MS) {
+    lastStopStateFlush = 0;
     flushStopState();
   }
 }

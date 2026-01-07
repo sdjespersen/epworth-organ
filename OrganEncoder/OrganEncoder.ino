@@ -13,7 +13,7 @@
 constexpr uint8_t PISTON_LOAD_PIN = 10;
 constexpr uint8_t PISTON_DATA_PIN = 9;
 constexpr uint8_t PISTON_CLOCK_PIN = 8;
-constexpr uint8_t CRESCENDO_WIPER_PIN = 21;
+constexpr uint8_t CRESCENDO_WIPER_PIN = A3;
 
 // To save on CPU cycles, don't poll the stop tab keys too often. We could keep adjusting this
 // number upward as long as we don't drop any key presses.
@@ -123,7 +123,7 @@ private:
 Debouncer<uint16_t, 5> stopTabButtonDebouncers[4];  // 4 divisions of 15 buttons
 Debouncer<uint8_t, 5> pistonDebouncer;              // 1 set of 8 buttons
 
-MIDI_CREATE_INSTANCE(HardwareSerial, Serial1, MIDI);
+MIDI_CREATE_DEFAULT_INSTANCE();
 
 uint16_t reverseByte(uint16_t b) {
   b = (b & 0xF0) >> 4 | (b & 0x0F) << 4;
@@ -262,13 +262,17 @@ void setup() {
   // pedal) only has 15 input buttons and 15 output LEDs. So for each division, we will have to
   // read 3 GPIO ports: A and B on the first MCP23017, but only B on the second chip.
   for (int i = 0; i < 4; i++) {
-    for (int j = 0; j < 2; j++) {
-      stopTabMcps[i][j].init();
-      stopTabMcps[i][j].portMode(MCP23017Port::A, 0x01);
-      stopTabMcps[i][j].portMode(MCP23017Port::B, 0x7F);
-      stopTabMcps[i][j].writeRegister(MCP23017Register::GPIO_A, 0xFE);
-      stopTabMcps[i][j].writeRegister(MCP23017Register::GPIO_B, 0x80);
-    }
+    // A few subtle differences between the 1st and 2nd of each group, hence the explicitness.
+    stopTabMcps[i][0].init();
+    stopTabMcps[i][1].init();
+    stopTabMcps[i][0].portMode(MCP23017Port::A, 0x01);
+    stopTabMcps[i][1].portMode(MCP23017Port::A, 0x00);
+    stopTabMcps[i][0].portMode(MCP23017Port::B, 0x7F);
+    stopTabMcps[i][1].portMode(MCP23017Port::B, 0x7F);
+    stopTabMcps[i][0].writeRegister(MCP23017Register::GPIO_A, 0xFE);
+    stopTabMcps[i][1].writeRegister(MCP23017Register::GPIO_A, 0x7F);
+    stopTabMcps[i][0].writeRegister(MCP23017Register::GPIO_B, 0x80);
+    stopTabMcps[i][1].writeRegister(MCP23017Register::GPIO_B, 0x00);
   }
 
   // Set up initial state for 74HC165 shift register that reads pistons
