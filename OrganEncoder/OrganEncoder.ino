@@ -262,13 +262,17 @@ void setup() {
   // pedal) only has 15 input buttons and 15 output LEDs. So for each division, we will have to
   // read 3 GPIO ports: A and B on the first MCP23017, but only B on the second chip.
   for (int i = 0; i < 4; i++) {
-    for (int j = 0; j < 2; j++) {
-      stopTabMcps[i][j].init();
-      stopTabMcps[i][j].portMode(MCP23017Port::A, 0x01);
-      stopTabMcps[i][j].portMode(MCP23017Port::B, 0x7F);
-      stopTabMcps[i][j].writeRegister(MCP23017Register::GPIO_A, 0xFE);
-      stopTabMcps[i][j].writeRegister(MCP23017Register::GPIO_B, 0x80);
-    }
+    // A few subtle differences between the 1st and 2nd of each group, hence the explicitness.
+    stopTabMcps[i][0].init();
+    stopTabMcps[i][1].init();
+    stopTabMcps[i][0].portMode(MCP23017Port::A, 0x01);
+    stopTabMcps[i][1].portMode(MCP23017Port::A, 0x00);
+    stopTabMcps[i][0].portMode(MCP23017Port::B, 0x7F);
+    stopTabMcps[i][1].portMode(MCP23017Port::B, 0x7F);
+    stopTabMcps[i][0].writeRegister(MCP23017Register::GPIO_A, 0xFE);
+    stopTabMcps[i][1].writeRegister(MCP23017Register::GPIO_A, 0x7F);
+    stopTabMcps[i][0].writeRegister(MCP23017Register::GPIO_B, 0x80);
+    stopTabMcps[i][1].writeRegister(MCP23017Register::GPIO_B, 0x00);
   }
 
   // Set up initial state for 74HC165 shift register that reads pistons
