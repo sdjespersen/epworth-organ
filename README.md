@@ -18,12 +18,17 @@ Some necessary steps/deps:
 When inside the `encoder-avr` or `decoder-avr` directory:
 
 ```
-cargo build --release && ./flashtoboard.sh
+cargo build --release
 ```
 
-You may have to change the port depending on where it gets mapped on your machine, `/dev/cu.usbserial-XXXX` or whatever.
-I don't love having a build script like this. I did try to get `ravedude` working so that `cargo run` would
-automatically take care of the flashing/bootloading, but i didn't succeed, hence the build script.
+will build the target, and
+
+```
+cargo run --release
+```
+
+will build and flash it to the MCU. You may have to change the USB port depending on where it gets mapped on your
+machine, `/dev/cu.usbserial-XXXX` or whatever.
 
 ## Gotchas
 
