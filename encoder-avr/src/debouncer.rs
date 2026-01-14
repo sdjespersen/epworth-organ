@@ -32,31 +32,28 @@ impl<const DEPTH: usize> Debouncer<DEPTH> {
         self.stable_state &= stable_low;
     }
 
-    pub fn for_each_falling_edge<F>(&self, mut f: F)
+    pub fn for_each_falling_edge<F>(&self, f: F)
     where
         F: FnMut(u8),
     {
-        if self.prev_stable_state != self.stable_state {
-            let mut mask = self.prev_stable_state & !self.stable_state;
-            while mask != 0 {
-                let i = mask.trailing_zeros() as u8;
-                f(i);
-                mask &= !(1 << i);
-            }
-        }
+        self.for_each_bit(self.prev_stable_state & !self.stable_state, f);
     }
 
-    pub fn for_each_rising_edge<F>(&self, mut f: F)
+    pub fn for_each_rising_edge<F>(&self, f: F)
     where
         F: FnMut(u8),
     {
-        if self.prev_stable_state != self.stable_state {
-            let mut mask = !self.prev_stable_state & self.stable_state;
-            while mask != 0 {
-                let i = mask.trailing_zeros() as u8;
-                f(i);
-                mask &= !(1 << i);
-            }
+        self.for_each_bit(!self.prev_stable_state & self.stable_state, f);
+    }
+
+    fn for_each_bit<F>(&self, mut mask: u16, mut f: F)
+    where
+        F: FnMut(u8),
+    {
+        while mask != 0 {
+            let i = mask.trailing_zeros() as u8;
+            f(i);
+            mask &= mask - 1;
         }
     }
 }
