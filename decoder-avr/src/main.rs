@@ -6,8 +6,8 @@ use panic_halt as _;
 use embedded_midi::MidiIn;
 use embedded_midi::MidiMessage;
 
-const FLUSH_STOP_STATE_ITVL_TICKS: u16 = 1_000;
-const LED_TOGGLE_ITVL_TICKS: u16 = 50_000;
+const FLUSH_STOP_STATE_ITVL_TICKS: u32 = 1_000;
+const LED_TOGGLE_ITVL_TICKS: u32 = 50_000;
 const CRESCENDO_STEPS: usize = 39;
 
 // Bit manipulation constants
@@ -110,8 +110,7 @@ fn main() -> ! {
     let mut crescendo_induced_stop_state = [0u16; 4];
     let mut pending_changes = true;
 
-    let mut ticks_since_last_flush = 0u16;
-    let mut ticks_since_last_led_toggle = 0u16;
+    let mut ticks = 0u32;
 
     oe.set_low();
 
@@ -153,7 +152,9 @@ fn main() -> ! {
             Err(_) => {} // probably should do something with this eventually
         }
 
-        if pending_changes && ticks_since_last_flush > FLUSH_STOP_STATE_ITVL_TICKS {
+        if pending_changes && (ticks % FLUSH_STOP_STATE_ITVL_TICKS == 0) {
+            pending_changes = false;
+
             // Interleave States
             let left_half = interleave_bits(
                 stop_state[1] | crescendo_induced_stop_state[1],
@@ -187,22 +188,16 @@ fn main() -> ! {
 
             latch.set_high();
             latch.set_low();
-
-            pending_changes = false;
-
-            ticks_since_last_flush = 0;
         }
 
-        if ticks_since_last_led_toggle > LED_TOGGLE_ITVL_TICKS {
-            ticks_since_last_led_toggle = 0;
+        if ticks % LED_TOGGLE_ITVL_TICKS == 0 {
             onboard_led.toggle();
         }
 
         // I'd love to use async rust, but i'm not really sure how to do that on AVR yet. In the meantime, we'll just
         // keep a tick counter without regard to real time. (I note that the implementation of delay_us and similar is
         // really just a busy loop of machine instructions anyway, so this is not too different in practice.)
-        ticks_since_last_flush += 1;
-        ticks_since_last_led_toggle += 1;
+        ticks += 1;
 
         arduino_hal::delay_us(10);
     }

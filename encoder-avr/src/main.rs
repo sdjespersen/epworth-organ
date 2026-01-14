@@ -15,10 +15,10 @@ use debouncer::Debouncer;
 use embedded_hal_bus::i2c::AtomicDevice;
 use mcp23017::{MCP23017, Port};
 
-const STOP_TAB_BUTTON_POLL_ITVL_TICKS: u16 = 5;
-const PISTON_POLL_ITVL_TICKS: u16 = 5;
-const CRESCENDO_READ_ITVL_TICKS: u16 = 5;
-const LED_TOGGLE_ITVL_TICKS: u16 = 2_000;
+const STOP_TAB_BUTTON_POLL_ITVL_TICKS: u32 = 5;
+const PISTON_POLL_ITVL_TICKS: u32 = 5;
+const CRESCENDO_READ_ITVL_TICKS: u32 = 5;
+const LED_TOGGLE_ITVL_TICKS: u32 = 2_000;
 
 fn reverse_byte(a: &u8) -> u8 {
     let mut b = *a;
@@ -118,11 +118,7 @@ fn main() -> ! {
     let mut adc = arduino_hal::Adc::new(dp.ADC, Default::default());
     let crescendo_pin = pins.a3.into_analog_input(&mut adc);
 
-    // TODO: Factor out all the tickers and their values into some sort of scheduler struct?
-    let mut since_last_stop_tab_read_ticks = 0u16;
-    let mut since_last_crescendo_read_ticks = 0u16;
-    let mut since_last_led_toggle_ticks = 0u16;
-    let mut since_last_piston_read_ticks = 0u16;
+    let mut ticks = 0u32;
 
     let mut smoothed_cresc_value = 0u16;
     let mut last_cresc_control_value = 0u8;
@@ -141,15 +137,12 @@ fn main() -> ! {
 
     loop {
         // Heartbeat indicator
-        if since_last_led_toggle_ticks > LED_TOGGLE_ITVL_TICKS {
-            since_last_led_toggle_ticks = 0;
+        if ticks % LED_TOGGLE_ITVL_TICKS == 0 {
             onboard_led.toggle();
         }
 
         // Stop tabs
-        if since_last_stop_tab_read_ticks > STOP_TAB_BUTTON_POLL_ITVL_TICKS {
-            since_last_stop_tab_read_ticks = 0;
-
+        if ticks % STOP_TAB_BUTTON_POLL_ITVL_TICKS == 0{
             // Stop tab buttons for each division are logically separate, so this looks like 4 scans.
             for (div, mcp_pair) in mcps.iter_mut().enumerate() {
                 stop_tab_button_debouncers[div].update(read_stop_tabs(mcp_pair));
@@ -166,9 +159,7 @@ fn main() -> ! {
         }
 
         // Pistons
-        if since_last_piston_read_ticks > PISTON_POLL_ITVL_TICKS {
-            since_last_piston_read_ticks = 0;
-
+        if ticks % PISTON_POLL_ITVL_TICKS == 0 {
             // Load piston states into 74HC165 shift register
             piston_load_pin.set_low();
             piston_load_pin.set_high();
@@ -234,8 +225,7 @@ fn main() -> ! {
         }
 
         // Crescendo pedal
-        if since_last_crescendo_read_ticks > CRESCENDO_READ_ITVL_TICKS {
-            since_last_crescendo_read_ticks = 0;
+        if ticks % CRESCENDO_READ_ITVL_TICKS == 0 {
             let crescendo_reading = crescendo_pin.analog_read(&mut adc) as u16;
 
             smoothed_cresc_value = (smoothed_cresc_value * 3 + crescendo_reading) / 4;
@@ -258,10 +248,7 @@ fn main() -> ! {
         // I'd love to use async rust, but i'm not really sure how to do that on AVR yet. In the meantime, we'll just
         // keep a tick counter without regard to real time. (I note that the implementation of delay_us and similar is
         // really just a busy loop of machine instructions anyway, so this is not too different in practice.)
-        since_last_led_toggle_ticks += 1;
-        since_last_stop_tab_read_ticks += 1;
-        since_last_piston_read_ticks += 1;
-        since_last_crescendo_read_ticks += 1;
+        ticks += 1;
 
         // This delay throttles the pin polling a bit, and allows us to roughly approximate the interval of time at
         // which we scan things.
