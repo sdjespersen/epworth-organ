@@ -216,7 +216,7 @@ fn main() -> ! {
                         for (div, mcp_pair) in mcps.iter_mut().enumerate() {
                             stop_state[div] = presets[i as usize][div];
                             write_stop_state_to_leds(&stop_state[div], mcp_pair);
-                            for j in 0..15 {
+                            for j in 0..16 {
                                 midi_out
                                     .write(&stop_state_cc_message(div, stop_state[div], j))
                                     .unwrap();

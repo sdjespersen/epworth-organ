@@ -1,0 +1,12 @@
+[build]
+target = "../avr-specs/avr-atmega328p.json"
+rustflags = ["-C", "target-cpu=atmega328p"]
+
+[unstable]
+build-std = ["core", "alloc"]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
