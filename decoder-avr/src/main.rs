@@ -7,6 +7,7 @@ use embedded_midi::MidiIn;
 use embedded_midi::MidiMessage;
 
 const FLUSH_STOP_STATE_ITVL_TICKS: u16 = 1_000;
+const LED_TOGGLE_ITVL_TICKS: u16 = 50_000;
 const CRESCENDO_STEPS: usize = 39;
 
 // Bit manipulation constants
@@ -95,6 +96,8 @@ fn main() -> ! {
     let (rx, _tx) = serial.split();
     let mut midi_in = MidiIn::new(rx);
 
+    let mut onboard_led = pins.d13.into_output();
+
     // For controlling the shift registers
     let mut oe = pins.d5.into_output();
     let mut clk = pins.d4.into_output();
@@ -106,7 +109,9 @@ fn main() -> ! {
     let mut stop_state = [0u16; 4];
     let mut crescendo_induced_stop_state = [0u16; 4];
     let mut pending_changes = true;
+
     let mut ticks_since_last_flush = 0u16;
+    let mut ticks_since_last_led_toggle = 0u16;
 
     oe.set_low();
 
@@ -188,9 +193,17 @@ fn main() -> ! {
             ticks_since_last_flush = 0;
         }
 
+        if ticks_since_last_led_toggle > LED_TOGGLE_ITVL_TICKS {
+            ticks_since_last_led_toggle = 0;
+            onboard_led.toggle();
+        }
+
         // I'd love to use async rust, but i'm not really sure how to do that on AVR yet. In the meantime, we'll just
         // keep a tick counter without regard to real time. (I note that the implementation of delay_us and similar is
         // really just a busy loop of machine instructions anyway, so this is not too different in practice.)
         ticks_since_last_flush += 1;
+        ticks_since_last_led_toggle += 1;
+
+        arduino_hal::delay_us(10);
     }
 }
