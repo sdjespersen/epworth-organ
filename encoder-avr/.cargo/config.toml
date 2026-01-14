@@ -10,3 +10,6 @@ panic = "abort"
 
 [profile.release]
 panic = "abort"
+
+[target.'cfg(all())']
+runner = ["avrdude", "-v", "-patmega328p", "-carduino", "-P/dev/cu.usbserial-1120", "-D", "-Uflash:w:target/avr-atmega328p/release/epworth-organ-encoder-avr.elf:e"]
