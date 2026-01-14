@@ -1,0 +1,19 @@
+[package]
+name = "epworth-organ-encoder-avr"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+panic-abort = "0.3.2"
+panic-halt = "1.0.0"
+ufmt = "0.2.0"
+embedded-hal-bus = { version = "0.3.0", features = ["portable-atomic"] }
+embedded-midi = "0.1.2"
+midi-types = "0.1.7"
+embedded-hal = "1.0.0"
+
+# not on crates.io so we fetch it via github
+[dependencies.arduino-hal]
+git = "https://github.com/rahix/avr-hal"
+rev = "ff4909c00ceee76d60f8bd7cc95bc0f3e2ab673f"
+features = ["arduino-nano"]
