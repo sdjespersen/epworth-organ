@@ -1,0 +1,19 @@
+[package]
+name = "encoder-rp2350"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cortex-m-rt = "0.7.5"
+defmt = "1.0.1"
+embassy-embedded-hal = "0.5.0"
+embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }
+embassy-rp = { version = "0.9.0", features = ["critical-section-impl", "rp235xa", "time-driver"] }
+embassy-sync = "0.7.2"
+embassy-time = "0.5.0"
+embedded-hal = "1.0.0"
+embedded-hal-async = "1.0.0"
+embedded-hal-bus = "0.3.0"
+midi-types = "0.2.1"
+panic-halt = "1.0.0"
+static_cell = "2.1.1"

@@ -2,4 +2,6 @@ kicad/**/*-backups/
 kicad/**/*.kicad_prl
 kicad/**/fp-info-cache
 
+target/
+
 .DS_Store
