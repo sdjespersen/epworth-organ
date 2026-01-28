@@ -102,6 +102,9 @@ fn handle_cc(mcps: &mut [[I2c0Mcp; 2]; 4], channel: u8, control_number: u8, valu
         STOP_STATE[channel as usize].fetch_and(!(1 << i), Ordering::SeqCst);
     }
     let div_stop_state = STOP_STATE[channel as usize].load(Ordering::SeqCst);
+    // TODO: Decouple stop state flushing! It's possible to get a flurry of incoming CCs (e.g. from external preset),
+    // in which case we'd like to update the internal state and only _then_ flush to MCPs. This could probably be
+    // accomplished by throttling the updates to the MCPs
     write_stop_state_to_leds(&mut mcps[channel as usize], div_stop_state);
 }
 
@@ -111,7 +114,7 @@ fn handle_program_change(mcps: &mut [[I2c0Mcp; 2]; 4], value: u8) {
     for (div, mcp_pair) in mcps.iter_mut().enumerate() {
         let div_preset = PRESETS[value as usize][div].load(Ordering::SeqCst);
         STOP_STATE[div].store(div_preset, Ordering::SeqCst);
-        // stop_state[div] = presets[i as usize][div];
+        // TODO: Decouple stop state flushing. Similar motivation as above note, though this instance isn't too bad.
         write_stop_state_to_leds(mcp_pair, div_preset);
     }
 }
