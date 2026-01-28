@@ -132,16 +132,6 @@ async fn enqueue_internal(message: MidiMessage) {
 }
 
 #[embassy_executor::task]
-async fn heartbeat(pin: Peri<'static, AnyPin>) {
-    let mut led = Output::new(pin, Level::Low);
-
-    loop {
-        led.toggle();
-        Timer::after_secs(1).await;
-    }
-}
-
-#[embassy_executor::task]
 async fn midi_event_listener(i2c_bus: &'static I2c0Bus) {
     let mcps = &mut get_mcps(i2c_bus);
 
@@ -284,14 +274,17 @@ async fn main(spawner: Spawner) {
         mcp_pair[1].write_gpio(Port::GPIOB, 0x00).unwrap();
     }
 
-    spawner.spawn(heartbeat(p.PIN_25.into())).unwrap();
     spawner
         .spawn(scan_pistons(p.PIN_2.into(), p.PIN_6.into(), p.PIN_3.into()))
         .unwrap();
     spawner.spawn(scan_stop_tab_buttons(i2c_bus)).unwrap();
     spawner.spawn(midi_event_listener(i2c_bus)).unwrap();
 
+    let mut led = Output::new(p.PIN_25, Level::Low);
+
     loop {
-        Timer::after_millis(600).await;
+        // "heartbeat"
+        led.toggle();
+        Timer::after_secs(1).await;
     }
 }
