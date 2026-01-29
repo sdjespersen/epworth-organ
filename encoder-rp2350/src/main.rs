@@ -8,6 +8,7 @@ use core::cell::RefCell;
 use core::sync::atomic::{AtomicU16, Ordering};
 
 use debouncer::Debouncer;
+use defmt::warn;
 use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_futures::select::select4;
@@ -25,7 +26,7 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
-use embassy_time::Timer;
+use embassy_time::{Duration, Timer, with_timeout};
 use embassy_usb::class::midi::MidiClass;
 use embassy_usb::{Builder, Config as UsbConfig};
 use panic_halt as _;
@@ -136,6 +137,7 @@ async fn flush_stop_state_to_leds(i2c_bus: &'static I2c0Bus) {
     let mcps = &mut get_mcps(i2c_bus);
 
     loop {
+        // TODO: Think of a more efficient way to indicate which divisions need to be flushed.
         let stop_state_change = select4(
             STOP_STATE_CHANGED[0].wait(),
             STOP_STATE_CHANGED[1].wait(),
@@ -288,7 +290,38 @@ async fn run_usb_device(mut usb_device: embassy_usb::UsbDevice<'static, Driver<'
 }
 
 #[embassy_executor::task]
-async fn write_usb_midi(mut midi_class: MidiClass<'static, Driver<'static, USB>>) {
+async fn usb_midi_driver(spawner: Spawner, usb: Peri<'static, USB>) {
+    let driver = Driver::new(usb, Irqs);
+    let mut config = UsbConfig::new(0xc0de, 0xcafe);
+    config.manufacturer = Some("RP Pico 2");
+    config.product = Some("Epworth Organ MIDI");
+    config.serial_number = Some("12345678");
+    config.max_power = 100;
+    config.max_packet_size_0 = 64;
+
+    static CONFIG_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
+    static BOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
+    static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
+
+    let mut builder = Builder::new(
+        driver,
+        config,
+        CONFIG_DESCRIPTOR.init([0; 256]),
+        BOS_DESCRIPTOR.init([0; 256]),
+        &mut [], // no msos descriptors
+        CONTROL_BUF.init([0; 64]),
+    );
+
+    let mut midi_class = MidiClass::new(&mut builder, 1, 1, 64);
+
+    // Build the builder.
+    let usb_device = builder.build();
+
+    // Run the USB device forever, in a separate task.
+    spawner.spawn(run_usb_device(usb_device)).unwrap();
+
+    midi_class.wait_connection().await;
+
     loop {
         let message = OUTBOUND_MIDI_EVENT_BUS.receive().await;
 
@@ -300,7 +333,29 @@ async fn write_usb_midi(mut midi_class: MidiClass<'static, Driver<'static, USB>>
                     cc_number.into(),
                     cc_value.into(),
                 ];
-                midi_class.write_packet(&cc_packet).await.unwrap();
+                // Try to send the packet, but give up after 2ms
+                // This prevents blocking if the USB host is stalled or disconnected
+                let result = with_timeout(
+                    Duration::from_millis(2),
+                    midi_class.write_packet(&cc_packet),
+                )
+                .await;
+
+                match result {
+                    Ok(Ok(())) => {
+                        // Success: Packet sent
+                    }
+                    Ok(Err(e)) => {
+                        // USB Error: Cable unplugged or bus reset?
+                        // Log it, but don't panic so the loop keeps running
+                        warn!("USB Write Error: {:?}", e);
+                    }
+                    Err(_) => {
+                        // Timeout: The host didn't pick up the data in time.
+                        // We drop the packet to keep the system responsive.
+                        warn!("USB Write Timeout (Dropping packet)");
+                    }
+                }
             }
             // MidiMessage::ProgramChange => {},
             _ => {}
@@ -332,38 +387,6 @@ async fn main(spawner: Spawner) {
         mcp_pair[1].write_gpio(Port::GPIOB, 0x00).unwrap();
     }
 
-    // USB + MIDI setup
-    let driver = Driver::new(p.USB, Irqs);
-    let mut config = UsbConfig::new(0xc0de, 0xcafe);
-    config.manufacturer = Some("RP Pico 2");
-    config.product = Some("Epworth Organ MIDI");
-    config.serial_number = Some("12345678");
-    config.max_power = 100;
-    config.max_packet_size_0 = 64;
-
-    static CONFIG_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
-    static BOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
-    static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
-
-    let mut builder = Builder::new(
-        driver,
-        config,
-        CONFIG_DESCRIPTOR.init([0; 256]),
-        BOS_DESCRIPTOR.init([0; 256]),
-        &mut [], // no msos descriptors
-        CONTROL_BUF.init([0; 64]),
-    );
-
-    let mut midi_class = MidiClass::new(&mut builder, 1, 1, 64);
-
-    // Build the builder.
-    let usb_device = builder.build();
-
-    // Run the USB device forever, in a separate task.
-    spawner.spawn(run_usb_device(usb_device)).unwrap();
-
-    midi_class.wait_connection().await;
-
     // Finally, spawn all tasks.
     spawner
         .spawn(scan_pistons(p.PIN_2.into(), p.PIN_6.into(), p.PIN_3.into()))
@@ -371,7 +394,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(scan_stop_tab_buttons(i2c_bus)).unwrap();
     spawner.spawn(flush_stop_state_to_leds(i2c_bus)).unwrap();
     spawner.spawn(midi_event_listener()).unwrap();
-    spawner.spawn(write_usb_midi(midi_class)).unwrap();
+    spawner.spawn(usb_midi_driver(spawner, p.USB)).unwrap();
 
     // Heartbeat task comes last, and happens on the main loop, roughly indicating that all tasks spawned successfully.
     let mut led = Output::new(p.PIN_25, Level::Low);
