@@ -540,6 +540,7 @@ dependencies = [
  "defmt",
  "embassy-embedded-hal",
  "embassy-executor",
+ "embassy-futures",
  "embassy-rp",
  "embassy-sync",
  "embassy-time",
