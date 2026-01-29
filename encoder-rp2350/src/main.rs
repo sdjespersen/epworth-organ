@@ -30,7 +30,7 @@ use embassy_time::{Duration, Timer, with_timeout};
 use embassy_usb::class::midi::MidiClass;
 use embassy_usb::{Builder, Config as UsbConfig};
 use panic_halt as _;
-use static_cell::StaticCell;
+use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::mcp23017::MCP23017;
 use crate::mcp23017::Port;
@@ -75,6 +75,10 @@ static PRESETS: [[AtomicU16; 4]; 8] = [
 ];
 static OUTBOUND_MIDI_EVENT_BUS: Channel<CriticalSectionRawMutex, MidiMessage, 16> = Channel::new();
 static INTERNAL_MIDI_EVENT_BUS: Channel<CriticalSectionRawMutex, MidiMessage, 16> = Channel::new();
+
+static USB_CONFIG_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
+static USB_BOS_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
+static USB_CONTROL_BUF: ConstStaticCell<[u8; 64]> = ConstStaticCell::new([0; 64]);
 
 fn reverse_byte(a: &u8) -> u8 {
     let mut b = *a;
@@ -299,17 +303,13 @@ async fn usb_midi_driver(spawner: Spawner, usb: Peri<'static, USB>) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
 
-    static CONFIG_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
-    static BOS_DESCRIPTOR: StaticCell<[u8; 256]> = StaticCell::new();
-    static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
-
     let mut builder = Builder::new(
         driver,
         config,
-        CONFIG_DESCRIPTOR.init([0; 256]),
-        BOS_DESCRIPTOR.init([0; 256]),
+        USB_CONFIG_DESCRIPTOR.take(),
+        USB_BOS_DESCRIPTOR.take(),
         &mut [], // no msos descriptors
-        CONTROL_BUF.init([0; 64]),
+        USB_CONTROL_BUF.take(),
     );
 
     let mut midi_class = MidiClass::new(&mut builder, 1, 1, 64);
