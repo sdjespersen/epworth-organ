@@ -12,6 +12,7 @@ use defmt::warn;
 use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_rp::gpio::Pull;
+use embassy_rp::i2c::I2c;
 use embassy_rp::peripherals::I2C0;
 use embassy_rp::peripherals::USB;
 use embassy_rp::usb::{Driver, InterruptHandler};
@@ -325,12 +326,8 @@ async fn usb_midi_driver(spawner: Spawner, usb: Peri<'static, USB>) {
     }
 }
 
-#[embassy_executor::main]
-async fn main(spawner: Spawner) {
-    let p = embassy_rp::init(Default::default());
-
-    // i2c and MCP23017 setup
-    let i2c = embassy_rp::i2c::I2c::new_blocking(p.I2C0, p.PIN_5, p.PIN_4, Config::default());
+#[embassy_executor::task]
+async fn i2c_tasks(spawner: Spawner, i2c: I2c<'static, I2C0, i2c::Blocking>) {
     static I2C_BUS: StaticCell<I2c0Bus> = StaticCell::new();
     let i2c_bus = I2C_BUS.init(Mutex::new(i2c.into()));
 
@@ -349,12 +346,19 @@ async fn main(spawner: Spawner) {
         mcp_pair[1].write_gpio(Port::GPIOB, 0x00).unwrap();
     }
 
-    // Finally, spawn all tasks.
+    spawner.spawn(scan_stop_tab_buttons(i2c_bus)).unwrap();
+    spawner.spawn(update_leds(i2c_bus)).unwrap();
+}
+
+#[embassy_executor::main]
+async fn main(spawner: Spawner) {
+    let p = embassy_rp::init(Default::default());
+
+    let i2c = embassy_rp::i2c::I2c::new_blocking(p.I2C0, p.PIN_5, p.PIN_4, Config::default());
+    spawner.spawn(i2c_tasks(spawner, i2c)).unwrap();
     spawner
         .spawn(scan_pistons(p.PIN_2.into(), p.PIN_6.into(), p.PIN_3.into()))
         .unwrap();
-    spawner.spawn(scan_stop_tab_buttons(i2c_bus)).unwrap();
-    spawner.spawn(update_leds(i2c_bus)).unwrap();
     spawner.spawn(usb_midi_driver(spawner, p.USB)).unwrap();
 
     // Heartbeat task comes last, and happens on the main loop, roughly indicating that all tasks spawned successfully.
