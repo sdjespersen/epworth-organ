@@ -44,7 +44,7 @@ bind_interrupts!(struct Irqs {
 });
 
 const GC_MESSAGE: MidiMessage = MidiMessage::ProgramChange(MidiChannel::new(4), Program::new(0));
-const USB_MIDI_WRITE_TIMEOUT: Duration = Duration::from_millis(1);
+const USB_MIDI_WRITE_TIMEOUT: Duration = Duration::from_millis(2);
 
 macro_rules! atomicu16_array {
     ($val:expr) => {{
@@ -317,9 +317,10 @@ async fn usb_midi_driver(spawner: Spawner, usb: Peri<'static, USB>) {
                         warn!("USB Write Error: {:?}", e);
                     }
                     Err(_) => {
-                        // Timeout: The host didn't pick up the data in time.
-                        // We drop the packet to keep the system responsive.
+                        // The host didn't pick up the data in time. Clear the entire outbound buffer to keep the
+                        // system responsive.
                         warn!("USB Write Timeout (Dropping packet)");
+                        OUTBOUND_USB_MIDI_EVENT_BUS.clear();
                     }
                 }
             }
