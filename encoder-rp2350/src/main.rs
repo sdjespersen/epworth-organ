@@ -44,6 +44,7 @@ bind_interrupts!(struct Irqs {
 });
 
 const GC_MESSAGE: MidiMessage = MidiMessage::ProgramChange(MidiChannel::new(4), Program::new(0));
+const USB_MIDI_WRITE_TIMEOUT: Duration = Duration::from_millis(1);
 
 macro_rules! atomicu16_array {
     ($val:expr) => {{
@@ -69,7 +70,9 @@ static PRESETS: [[AtomicU16; 4]; 8] = [
     atomicu16_array!(0),
     atomicu16_array!(0),
 ];
-static OUTBOUND_MIDI_EVENT_BUS: Channel<CriticalSectionRawMutex, MidiMessage, 16> = Channel::new();
+// This channel has a relatively large buffer to accommodate bursts of MIDI messages when recalling presets. If the USB
+// host is slow or disconnected (e.g. in analog-only mode), we don't want to block the entire system.
+static OUTBOUND_USB_MIDI_EVENT_BUS: Channel<CriticalSectionRawMutex, MidiMessage, 128> = Channel::new();
 
 static USB_CONFIG_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
 static USB_BOS_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
@@ -108,7 +111,7 @@ async fn recall_preset(value: u8) {
         STOP_STATE[div].store(div_preset, Ordering::SeqCst);
         // Now we need to emit 15 MIDI CCs...skipping i = 0 (LSB) which doesn't correspond to physical hardware
         for i in 1..=15 {
-            OUTBOUND_MIDI_EVENT_BUS
+            OUTBOUND_USB_MIDI_EVENT_BUS
                 .send(stop_tab_midi_cc_message(div, i, div_preset))
                 .await;
         }
@@ -175,7 +178,7 @@ async fn scan_stop_tab_buttons(i2c_bus: &'static I2c0Bus) {
             for i in stop_tab_button_debouncers[div].falling_edges() {
                 let div_stop_state = STOP_STATE[div].fetch_xor(1 << i, Ordering::SeqCst) ^ (1 << i);
                 STOP_STATE_CHANGED.signal(true);
-                OUTBOUND_MIDI_EVENT_BUS
+                OUTBOUND_USB_MIDI_EVENT_BUS
                     .send(stop_tab_midi_cc_message(div, i, div_stop_state))
                     .await;
             }
@@ -225,7 +228,7 @@ async fn scan_pistons(
                 awaiting_save = true;
             } else if i == 1 {
                 // GC piston, implemented as a "fixed preset" with all 0s
-                OUTBOUND_MIDI_EVENT_BUS.send(GC_MESSAGE).await;
+                OUTBOUND_USB_MIDI_EVENT_BUS.send(GC_MESSAGE).await;
                 recall_preset(0).await;
             } else {
                 if awaiting_save {
@@ -235,7 +238,7 @@ async fn scan_pistons(
                     // Recalling a preset, on the other hand, emits a program change.
                     let program_change =
                         MidiMessage::ProgramChange(MidiChannel::from(4), Program::from(i - 1));
-                    OUTBOUND_MIDI_EVENT_BUS.send(program_change).await;
+                    OUTBOUND_USB_MIDI_EVENT_BUS.send(program_change).await;
                     recall_preset(i - 1).await;
                 }
             }
@@ -286,7 +289,7 @@ async fn usb_midi_driver(spawner: Spawner, usb: Peri<'static, USB>) {
     midi_class.wait_connection().await;
 
     loop {
-        let message = OUTBOUND_MIDI_EVENT_BUS.receive().await;
+        let message = OUTBOUND_USB_MIDI_EVENT_BUS.receive().await;
 
         match message {
             MidiMessage::ControlChange(channel, cc_number, cc_value) => {
@@ -299,7 +302,7 @@ async fn usb_midi_driver(spawner: Spawner, usb: Peri<'static, USB>) {
                 // Try to send the packet, but give up after 2ms
                 // This prevents blocking if the USB host is stalled or disconnected
                 let result = with_timeout(
-                    Duration::from_millis(2),
+                    USB_MIDI_WRITE_TIMEOUT,
                     midi_class.write_packet(&cc_packet),
                 )
                 .await;
