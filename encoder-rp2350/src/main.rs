@@ -13,15 +13,13 @@ use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_rp::gpio::Pull;
 use embassy_rp::i2c::I2c;
-use embassy_rp::peripherals::I2C0;
-use embassy_rp::peripherals::USB;
-use embassy_rp::usb::{Driver, InterruptHandler};
+use embassy_rp::peripherals::{I2C0, UART0, USB};
+use embassy_rp::usb;
 use embassy_rp::{
     Peri,
     gpio::{AnyPin, Input, Level, Output},
-    i2c::Config,
 };
-use embassy_rp::{bind_interrupts, i2c};
+use embassy_rp::{bind_interrupts, i2c, uart};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use embassy_sync::channel::Channel;
@@ -40,7 +38,8 @@ type I2c0Bus = Mutex<NoopRawMutex, RefCell<i2c::I2c<'static, I2C0, i2c::Blocking
 type I2c0Mcp = MCP23017<I2cDevice<'static, NoopRawMutex, i2c::I2c<'static, I2C0, i2c::Blocking>>>;
 
 bind_interrupts!(struct Irqs {
-    USBCTRL_IRQ => InterruptHandler<USB>;
+    USBCTRL_IRQ => usb::InterruptHandler<USB>;
+    UART0_IRQ => uart::InterruptHandler<UART0>;
 });
 
 const GC_MESSAGE: MidiMessage = MidiMessage::ProgramChange(MidiChannel::new(4), Program::new(0));
@@ -72,7 +71,11 @@ static PRESETS: [[AtomicU16; 4]; 8] = [
 ];
 // This channel has a relatively large buffer to accommodate bursts of MIDI messages when recalling presets. If the USB
 // host is slow or disconnected (e.g. in analog-only mode), we don't want to block the entire system.
-static OUTBOUND_USB_MIDI_EVENT_BUS: Channel<CriticalSectionRawMutex, MidiMessage, 128> = Channel::new();
+static OUTBOUND_USB_MIDI_EVENT_BUS: Channel<CriticalSectionRawMutex, MidiMessage, 128> =
+    Channel::new();
+// This channel has a smaller buffer since all messages are consumed and written to hardware we control directly.
+static OUTBOUND_UART_MIDI_EVENT_BUS: Channel<CriticalSectionRawMutex, MidiMessage, 64> =
+    Channel::new();
 
 static USB_CONFIG_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
 static USB_BOS_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
@@ -111,9 +114,9 @@ async fn recall_preset(value: u8) {
         STOP_STATE[div].store(div_preset, Ordering::SeqCst);
         // Now we need to emit 15 MIDI CCs...skipping i = 0 (LSB) which doesn't correspond to physical hardware
         for i in 1..=15 {
-            OUTBOUND_USB_MIDI_EVENT_BUS
-                .send(stop_tab_midi_cc_message(div, i, div_preset))
-                .await;
+            let msg = stop_tab_midi_cc_message(div, i, div_preset);
+            OUTBOUND_USB_MIDI_EVENT_BUS.send(msg).await;
+            OUTBOUND_UART_MIDI_EVENT_BUS.send(msg).await;
         }
     }
     STOP_STATE_CHANGED.signal(true);
@@ -177,10 +180,10 @@ async fn scan_stop_tab_buttons(i2c_bus: &'static I2c0Bus) {
 
             for i in stop_tab_button_debouncers[div].falling_edges() {
                 let div_stop_state = STOP_STATE[div].fetch_xor(1 << i, Ordering::SeqCst) ^ (1 << i);
+                let msg = stop_tab_midi_cc_message(div, i, div_stop_state);
                 STOP_STATE_CHANGED.signal(true);
-                OUTBOUND_USB_MIDI_EVENT_BUS
-                    .send(stop_tab_midi_cc_message(div, i, div_stop_state))
-                    .await;
+                OUTBOUND_USB_MIDI_EVENT_BUS.send(msg).await;
+                OUTBOUND_UART_MIDI_EVENT_BUS.send(msg).await;
             }
         }
         Timer::after_micros(200).await;
@@ -229,6 +232,7 @@ async fn scan_pistons(
             } else if i == 1 {
                 // GC piston, implemented as a "fixed preset" with all 0s
                 OUTBOUND_USB_MIDI_EVENT_BUS.send(GC_MESSAGE).await;
+                // Program changes are NOT emitted on the UART MIDI bus; only the individual CCs are.
                 recall_preset(0).await;
             } else {
                 if awaiting_save {
@@ -239,6 +243,7 @@ async fn scan_pistons(
                     let program_change =
                         MidiMessage::ProgramChange(MidiChannel::from(4), Program::from(i - 1));
                     OUTBOUND_USB_MIDI_EVENT_BUS.send(program_change).await;
+                    // Program changes are NOT emitted on the UART MIDI bus; only the individual CCs are.
                     recall_preset(i - 1).await;
                 }
             }
@@ -255,13 +260,15 @@ async fn scan_pistons(
 }
 
 #[embassy_executor::task]
-async fn run_usb_device(mut usb_device: embassy_usb::UsbDevice<'static, Driver<'static, USB>>) {
+async fn run_usb_device(
+    mut usb_device: embassy_usb::UsbDevice<'static, usb::Driver<'static, USB>>,
+) {
     usb_device.run().await;
 }
 
 #[embassy_executor::task]
 async fn usb_midi_driver(spawner: Spawner, usb: Peri<'static, USB>) {
-    let driver = Driver::new(usb, Irqs);
+    let driver = usb::Driver::new(usb, Irqs);
     let mut config = UsbConfig::new(0xc0de, 0xcafe);
     config.manufacturer = Some("RP Pico 2");
     config.product = Some("Epworth Organ MIDI");
@@ -301,11 +308,8 @@ async fn usb_midi_driver(spawner: Spawner, usb: Peri<'static, USB>) {
                 ];
                 // Try to send the packet, but give up after 2ms
                 // This prevents blocking if the USB host is stalled or disconnected
-                let result = with_timeout(
-                    USB_MIDI_WRITE_TIMEOUT,
-                    midi_class.write_packet(&cc_packet),
-                )
-                .await;
+                let result =
+                    with_timeout(USB_MIDI_WRITE_TIMEOUT, midi_class.write_packet(&cc_packet)).await;
 
                 match result {
                     Ok(Ok(())) => {
@@ -354,16 +358,37 @@ async fn i2c_tasks(spawner: Spawner, i2c: I2c<'static, I2C0, i2c::Blocking>) {
     spawner.spawn(update_leds(i2c_bus)).unwrap();
 }
 
+#[embassy_executor::task]
+async fn uart_midi_output(mut uart_tx: uart::UartTx<'static, uart::Blocking>) {
+    loop {
+        let message = OUTBOUND_UART_MIDI_EVENT_BUS.receive().await;
+
+        match message {
+            MidiMessage::ControlChange(channel, cc_number, cc_value) => {
+                let cc_packet = [u8::from(channel), cc_number.into(), cc_value.into()];
+                // TODO: Get this working.
+                uart_tx.blocking_write(&cc_packet).unwrap();
+            }
+            // TODO: Note on/off, etc.
+            _ => {}
+        }
+    }
+}
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
 
-    let i2c = embassy_rp::i2c::I2c::new_blocking(p.I2C0, p.PIN_5, p.PIN_4, Config::default());
+    let i2c = embassy_rp::i2c::I2c::new_blocking(p.I2C0, p.PIN_5, p.PIN_4, i2c::Config::default());
     spawner.spawn(i2c_tasks(spawner, i2c)).unwrap();
     spawner
         .spawn(scan_pistons(p.PIN_2.into(), p.PIN_6.into(), p.PIN_3.into()))
         .unwrap();
     spawner.spawn(usb_midi_driver(spawner, p.USB)).unwrap();
+
+    // Not sure if this'll work. I'm sending "MIDI", but i like the higher default baud rate (115200).
+    let uart_tx = uart::UartTx::new_blocking(p.UART0, p.PIN_0, uart::Config::default());
+    spawner.spawn(uart_midi_output(uart_tx)).unwrap();
 
     // Heartbeat task comes last, and happens on the main loop, roughly indicating that all tasks spawned successfully.
     let mut led = Output::new(p.PIN_25, Level::Low);
