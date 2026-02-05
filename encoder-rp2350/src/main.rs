@@ -366,7 +366,6 @@ async fn uart_midi_output(mut uart_tx: uart::UartTx<'static, uart::Blocking>) {
         match message {
             MidiMessage::ControlChange(channel, cc_number, cc_value) => {
                 let cc_packet = [u8::from(channel), cc_number.into(), cc_value.into()];
-                // TODO: Get this working.
                 uart_tx.blocking_write(&cc_packet).unwrap();
             }
             // TODO: Note on/off, etc.
