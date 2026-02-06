@@ -298,7 +298,6 @@ async fn scan_pistons(
                     message: MidiMessage::ProgramChange { program: 0.into() },
                 };
                 let _ = OUTBOUND_USB_MIDI_EVENT_BUS.try_send(gc_message);
-                // Program changes are NOT emitted on the UART MIDI bus; only the individual CCs are.
                 recall_preset(0).await;
             } else {
                 if awaiting_save {
@@ -313,7 +312,6 @@ async fn scan_pistons(
                         },
                     };
                     let _ = OUTBOUND_USB_MIDI_EVENT_BUS.try_send(program_change);
-                    // Program changes are NOT emitted on the UART MIDI bus; only the individual CCs are.
                     recall_preset(i - 1).await;
                 }
             }
