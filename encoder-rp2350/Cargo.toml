@@ -15,6 +15,6 @@ embassy-usb = "0.5.1"
 embedded-hal = "1.0.0"
 embedded-hal-async = "1.0.0"
 embedded-hal-bus = "0.3.0"
-midi-types = "0.2.1"
+midly = { version = "0.5.3", default-features = false }
 panic-halt = "1.0.0"
 static_cell = "2.1.1"

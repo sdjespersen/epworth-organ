@@ -8,11 +8,9 @@ use core::cell::RefCell;
 use core::sync::atomic::{AtomicU16, Ordering};
 
 use debouncer::Debouncer;
-use defmt::warn;
 use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_rp::gpio::Pull;
-use embassy_rp::i2c::I2c;
 use embassy_rp::peripherals::{I2C0, UART0, USB};
 use embassy_rp::usb;
 use embassy_rp::{
@@ -24,15 +22,17 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
-use embassy_time::{Duration, Timer, with_timeout};
+use embassy_time::Timer;
 use embassy_usb::class::midi::MidiClass;
 use embassy_usb::{Builder, Config as UsbConfig};
+use midly::MidiMessage;
+use midly::live::LiveEvent;
+use midly::num::{u4, u7};
 use panic_halt as _;
 use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::mcp23017::MCP23017;
 use crate::mcp23017::Port;
-use midi_types::{Channel as MidiChannel, Control, MidiMessage, Program, Value7};
 
 type I2c0Bus = Mutex<NoopRawMutex, RefCell<i2c::I2c<'static, I2C0, i2c::Blocking>>>;
 type I2c0Mcp = MCP23017<I2cDevice<'static, NoopRawMutex, i2c::I2c<'static, I2C0, i2c::Blocking>>>;
@@ -41,9 +41,6 @@ bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => usb::InterruptHandler<USB>;
     UART0_IRQ => uart::InterruptHandler<UART0>;
 });
-
-const GC_MESSAGE: MidiMessage = MidiMessage::ProgramChange(MidiChannel::new(4), Program::new(0));
-const USB_MIDI_WRITE_TIMEOUT: Duration = Duration::from_millis(2);
 
 macro_rules! atomicu16_array {
     ($val:expr) => {{
@@ -55,6 +52,12 @@ macro_rules! atomicu16_array {
         ]
     }};
 }
+
+const B: [u32; 4] = [0x55555555, 0x33333333, 0x0F0F0F0F, 0x00FF00FF];
+const S: [u32; 4] = [1, 2, 4, 8];
+const NIBBLE_REVERSE_LOOKUP: [u8; 16] = [
+    0x0, 0x8, 0x4, 0xc, 0x2, 0xa, 0x6, 0xe, 0x1, 0x9, 0x5, 0xd, 0x3, 0xb, 0x7, 0xf,
+];
 
 static STOP_STATE: [AtomicU16; 4] = atomicu16_array!(0);
 static STOP_STATE_CHANGED: Signal<CriticalSectionRawMutex, bool> = Signal::new();
@@ -71,10 +74,7 @@ static PRESETS: [[AtomicU16; 4]; 8] = [
 ];
 // This channel has a relatively large buffer to accommodate bursts of MIDI messages when recalling presets. If the USB
 // host is slow or disconnected (e.g. in analog-only mode), we don't want to block the entire system.
-static OUTBOUND_USB_MIDI_EVENT_BUS: Channel<CriticalSectionRawMutex, MidiMessage, 128> =
-    Channel::new();
-// This channel has a smaller buffer since all messages are consumed and written to hardware we control directly.
-static OUTBOUND_UART_MIDI_EVENT_BUS: Channel<CriticalSectionRawMutex, MidiMessage, 64> =
+static OUTBOUND_USB_MIDI_EVENT_BUS: Channel<CriticalSectionRawMutex, LiveEvent, 128> =
     Channel::new();
 
 static USB_CONFIG_DESCRIPTOR: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0; 256]);
@@ -89,16 +89,29 @@ fn reverse_byte(a: &u8) -> u8 {
     b
 }
 
-fn stop_tab_midi_cc_message(div: usize, i: u8, div_stop_state: u16) -> MidiMessage {
-    let mut midi_val = 0u8;
-    if div_stop_state >> i & 1 == 1 {
-        midi_val = 127;
+fn interleave_bits(a: u16, b: u16) -> u32 {
+    let mut x = a as u32;
+    let mut y = b as u32;
+
+    for i in (0..4).rev() {
+        x = (x | (x << S[i])) & B[i];
+        y = (y | (y << S[i])) & B[i];
     }
-    MidiMessage::ControlChange(
-        MidiChannel::from(div as u8),
-        Control::from(117 - i),
-        Value7::from(midi_val),
-    )
+    x | (y << 1)
+}
+
+fn stop_tab_midi_cc_message(div: usize, i: u8, div_stop_state: u16) -> LiveEvent<'static> {
+    let mut midi_val: u7 = 0.into();
+    if div_stop_state >> i & 1 == 1 {
+        midi_val = u7::max_value();
+    }
+    LiveEvent::Midi {
+        channel: u4::from(div as u8),
+        message: MidiMessage::Controller {
+            controller: (117 - i).into(),
+            value: midi_val,
+        },
+    }
 }
 
 fn save_preset(value: u8) {
@@ -116,7 +129,6 @@ async fn recall_preset(value: u8) {
         for i in 1..=15 {
             let msg = stop_tab_midi_cc_message(div, i, div_preset);
             let _ = OUTBOUND_USB_MIDI_EVENT_BUS.try_send(msg); // yes, yes, this could return error
-            OUTBOUND_UART_MIDI_EVENT_BUS.send(msg).await;
         }
     }
     STOP_STATE_CHANGED.signal(true);
@@ -132,21 +144,56 @@ fn get_mcps(i2c_bus: &'static I2c0Bus) -> [[I2c0Mcp; 2]; 4] {
 }
 
 #[embassy_executor::task]
-async fn update_leds(i2c_bus: &'static I2c0Bus) {
+async fn flush_stop_state(
+    i2c_bus: &'static I2c0Bus,
+    data_pin: Peri<'static, AnyPin>,
+    clock_pin: Peri<'static, AnyPin>,
+    latch_pin: Peri<'static, AnyPin>,
+) {
     let mcps = &mut get_mcps(i2c_bus);
+    let mut stops_data_pin = Output::new(data_pin, Level::Low);
+    let mut stops_clock_pin = Output::new(clock_pin, Level::Low);
+    let mut stops_latch_pin = Output::new(latch_pin, Level::Low);
 
     loop {
-        // Only update when things have changed.
-        STOP_STATE_CHANGED.wait().await;
+        // The loop condition is at the end so that we persist the initial state.
 
-        // This is our approach to batching lots of little changes: Wait for a brief interval before reading the stop
-        // states.
-        Timer::after_millis(1).await;
+        let stop_states = [
+            STOP_STATE[0].load(Ordering::SeqCst),
+            STOP_STATE[1].load(Ordering::SeqCst),
+            STOP_STATE[2].load(Ordering::SeqCst),
+            STOP_STATE[3].load(Ordering::SeqCst),
+        ];
+        // Interleave States
+        let left_half = interleave_bits(stop_states[1], stop_states[2]);
+        let right_half = interleave_bits(stop_states[3], stop_states[0]);
 
-        for (div, state) in STOP_STATE.iter().enumerate() {
-            let div_stop_state = state.load(Ordering::SeqCst);
-            let left_half = reverse_byte(&(!(div_stop_state >> 8) as u8));
-            let right_half = reverse_byte(&(!(div_stop_state & 0xFF) as u8));
+        for val in [right_half, left_half] {
+            for i in 0..4 {
+                let mut to_write = ((val >> (8 * i)) & 0xFF) as u8;
+                // Reverse lower nibble
+                to_write = (to_write & 0xF0) | NIBBLE_REVERSE_LOOKUP[(to_write & 0x0F) as usize];
+
+                // Manual ShiftOut
+                for bit in 0..8 {
+                    if (to_write >> bit) & 1 == 1 {
+                        stops_data_pin.set_high();
+                    } else {
+                        stops_data_pin.set_low();
+                    }
+                    stops_clock_pin.set_high();
+                    stops_clock_pin.set_low();
+                }
+            }
+        }
+
+        stops_latch_pin.set_high();
+        stops_latch_pin.set_low();
+
+        // Second (as it's slightly less important), flush state to the LEDs on the MCP23017s.
+        for (div, state) in stop_states.iter().enumerate() {
+            let left_half = reverse_byte(&(!(state >> 8) as u8));
+            let right_half = reverse_byte(&(!(state & 0xFF) as u8));
             mcps[div][0]
                 .write_gpio(Port::GPIOA, (left_half & 0x7F) << 1)
                 .unwrap();
@@ -157,6 +204,13 @@ async fn update_leds(i2c_bus: &'static I2c0Bus) {
                 .write_gpio(Port::GPIOA, right_half & 0x7F)
                 .unwrap();
         }
+
+        // Only update when things have changed.
+        STOP_STATE_CHANGED.wait().await;
+
+        // This is our approach to batching lots of little changes: Wait for a brief interval before reading the stop
+        // states.
+        Timer::after_millis(1).await;
     }
 }
 
@@ -183,7 +237,6 @@ async fn scan_stop_tab_buttons(i2c_bus: &'static I2c0Bus) {
                 let msg = stop_tab_midi_cc_message(div, i, div_stop_state);
                 STOP_STATE_CHANGED.signal(true);
                 let _ = OUTBOUND_USB_MIDI_EVENT_BUS.try_send(msg); // again, i get that this could error
-                OUTBOUND_UART_MIDI_EVENT_BUS.send(msg).await;
             }
         }
         Timer::after_micros(200).await;
@@ -231,7 +284,11 @@ async fn scan_pistons(
                 awaiting_save = true;
             } else if i == 1 {
                 // GC piston, implemented as a "fixed preset" with all 0s
-                let _ = OUTBOUND_USB_MIDI_EVENT_BUS.try_send(GC_MESSAGE);
+                let gc_message = LiveEvent::Midi {
+                    channel: 5.into(),
+                    message: MidiMessage::ProgramChange { program: 0.into() },
+                };
+                let _ = OUTBOUND_USB_MIDI_EVENT_BUS.try_send(gc_message);
                 // Program changes are NOT emitted on the UART MIDI bus; only the individual CCs are.
                 recall_preset(0).await;
             } else {
@@ -240,8 +297,12 @@ async fn scan_pistons(
                     save_preset(i - 1);
                 } else {
                     // Recalling a preset, on the other hand, emits a program change.
-                    let program_change =
-                        MidiMessage::ProgramChange(MidiChannel::from(4), Program::from(i - 1));
+                    let program_change = LiveEvent::Midi {
+                        channel: 5.into(),
+                        message: MidiMessage::ProgramChange {
+                            program: (i - 1).into(),
+                        },
+                    };
                     let _ = OUTBOUND_USB_MIDI_EVENT_BUS.try_send(program_change);
                     // Program changes are NOT emitted on the UART MIDI bus; only the individual CCs are.
                     recall_preset(i - 1).await;
@@ -296,49 +357,29 @@ async fn usb_midi_driver(spawner: Spawner, usb: Peri<'static, USB>) {
     midi_class.wait_connection().await;
 
     loop {
-        let message = OUTBOUND_USB_MIDI_EVENT_BUS.receive().await;
+        let event = OUTBOUND_USB_MIDI_EVENT_BUS.receive().await;
 
-        match message {
-            MidiMessage::ControlChange(channel, cc_number, cc_value) => {
-                let cc_packet = [
-                    0x0B,
-                    u8::from(channel) + 0xB0,
-                    cc_number.into(),
-                    cc_value.into(),
-                ];
-                // Try to send the packet, but give up after 2ms
-                // This prevents blocking if the USB host is stalled or disconnected
-                let result =
-                    with_timeout(USB_MIDI_WRITE_TIMEOUT, midi_class.write_packet(&cc_packet)).await;
-
-                match result {
-                    Ok(Ok(())) => {
-                        // Success: Packet sent
-                    }
-                    Ok(Err(e)) => {
-                        // USB Error: Cable unplugged or bus reset?
-                        // Log it, but don't panic so the loop keeps running
-                        warn!("USB Write Error: {:?}", e);
-                    }
-                    Err(_) => {
-                        // The host didn't pick up the data in time. Clear the entire outbound buffer to keep the
-                        // system responsive.
-                        warn!("USB Write Timeout (Dropping packet)");
-                        OUTBOUND_USB_MIDI_EVENT_BUS.clear();
-                    }
+        match event {
+            // TODO: Figure out if we can use LiveEvent's own `Write` functionality to avoid doing this manually.
+            LiveEvent::Midi { channel, message } => match message {
+                MidiMessage::Controller { controller, value } => {
+                    let cc_packet = [
+                        0x0B,
+                        u8::from(channel) + 0xB0,
+                        controller.into(),
+                        value.into(),
+                    ];
+                    let _ = midi_class.write_packet(&cc_packet).await;
                 }
-            }
-            // MidiMessage::ProgramChange => {},
+                _ => {}
+            },
             _ => {}
         }
     }
 }
 
 #[embassy_executor::task]
-async fn i2c_tasks(spawner: Spawner, i2c: I2c<'static, I2C0, i2c::Blocking>) {
-    static I2C_BUS: StaticCell<I2c0Bus> = StaticCell::new();
-    let i2c_bus = I2C_BUS.init(Mutex::new(i2c.into()));
-
+async fn mcp_setup(i2c_bus: &'static I2c0Bus) {
     for mcp_pair in get_mcps(i2c_bus).iter_mut() {
         mcp_pair[0].init_hardware().unwrap();
         mcp_pair[1].init_hardware().unwrap();
@@ -353,25 +394,6 @@ async fn i2c_tasks(spawner: Spawner, i2c: I2c<'static, I2C0, i2c::Blocking>) {
         mcp_pair[1].write_gpio(Port::GPIOA, 0x7F).unwrap();
         mcp_pair[1].write_gpio(Port::GPIOB, 0x00).unwrap();
     }
-
-    spawner.spawn(scan_stop_tab_buttons(i2c_bus)).unwrap();
-    spawner.spawn(update_leds(i2c_bus)).unwrap();
-}
-
-#[embassy_executor::task]
-async fn uart_midi_output(mut uart_tx: uart::UartTx<'static, uart::Blocking>) {
-    loop {
-        let message = OUTBOUND_UART_MIDI_EVENT_BUS.receive().await;
-
-        match message {
-            MidiMessage::ControlChange(channel, cc_number, cc_value) => {
-                let cc_packet = [u8::from(channel), cc_number.into(), cc_value.into()];
-                uart_tx.blocking_write(&cc_packet).unwrap();
-            }
-            // TODO: Note on/off, etc.
-            _ => {}
-        }
-    }
 }
 
 #[embassy_executor::main]
@@ -379,15 +401,23 @@ async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
 
     let i2c = embassy_rp::i2c::I2c::new_blocking(p.I2C0, p.PIN_5, p.PIN_4, i2c::Config::default());
-    spawner.spawn(i2c_tasks(spawner, i2c)).unwrap();
+    static I2C_BUS: StaticCell<I2c0Bus> = StaticCell::new();
+    let i2c_bus = I2C_BUS.init(Mutex::new(i2c.into()));
+
+    spawner.spawn(mcp_setup(i2c_bus)).unwrap();
+    spawner.spawn(scan_stop_tab_buttons(i2c_bus)).unwrap();
+    spawner
+        .spawn(flush_stop_state(
+            i2c_bus,
+            p.PIN_13.into(),
+            p.PIN_14.into(),
+            p.PIN_15.into(),
+        ))
+        .unwrap();
     spawner
         .spawn(scan_pistons(p.PIN_2.into(), p.PIN_6.into(), p.PIN_3.into()))
         .unwrap();
     spawner.spawn(usb_midi_driver(spawner, p.USB)).unwrap();
-
-    // Not sure if this'll work. I'm sending "MIDI", but i like the higher default baud rate (115200).
-    let uart_tx = uart::UartTx::new_blocking(p.UART0, p.PIN_16, uart::Config::default());
-    spawner.spawn(uart_midi_output(uart_tx)).unwrap();
 
     // Heartbeat task comes last, and happens on the main loop, roughly indicating that all tasks spawned successfully.
     let mut led = Output::new(p.PIN_25, Level::Low);
