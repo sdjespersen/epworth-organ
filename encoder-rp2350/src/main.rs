@@ -374,8 +374,7 @@ async fn usb_midi_driver(spawner: Spawner, usb: Peri<'static, USB>) {
     }
 }
 
-#[embassy_executor::task]
-async fn mcp_setup(i2c_bus: &'static I2c0Bus) {
+fn setup_mcps(i2c_bus: &'static I2c0Bus) {
     for mcp_pair in get_mcps(i2c_bus).iter_mut() {
         mcp_pair[0].init_hardware().unwrap();
         mcp_pair[1].init_hardware().unwrap();
@@ -400,7 +399,7 @@ async fn main(spawner: Spawner) {
     static I2C_BUS: StaticCell<I2c0Bus> = StaticCell::new();
     let i2c_bus = I2C_BUS.init(Mutex::new(i2c.into()));
 
-    spawner.spawn(mcp_setup(i2c_bus)).unwrap();
+    setup_mcps(i2c_bus);
     spawner.spawn(scan_stop_tab_buttons(i2c_bus)).unwrap();
     spawner
         .spawn(flush_stop_state(
