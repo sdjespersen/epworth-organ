@@ -115,7 +115,7 @@ async fn recall_preset(value: u8) {
         // Now we need to emit 15 MIDI CCs...skipping i = 0 (LSB) which doesn't correspond to physical hardware
         for i in 1..=15 {
             let msg = stop_tab_midi_cc_message(div, i, div_preset);
-            OUTBOUND_USB_MIDI_EVENT_BUS.send(msg).await;
+            let _ = OUTBOUND_USB_MIDI_EVENT_BUS.try_send(msg); // yes, yes, this could return error
             OUTBOUND_UART_MIDI_EVENT_BUS.send(msg).await;
         }
     }
@@ -143,8 +143,8 @@ async fn update_leds(i2c_bus: &'static I2c0Bus) {
         // states.
         Timer::after_millis(1).await;
 
-        for div in 0..4 {
-            let div_stop_state = STOP_STATE[div].load(Ordering::SeqCst);
+        for (div, state) in STOP_STATE.iter().enumerate() {
+            let div_stop_state = state.load(Ordering::SeqCst);
             let left_half = reverse_byte(&(!(div_stop_state >> 8) as u8));
             let right_half = reverse_byte(&(!(div_stop_state & 0xFF) as u8));
             mcps[div][0]
@@ -182,7 +182,7 @@ async fn scan_stop_tab_buttons(i2c_bus: &'static I2c0Bus) {
                 let div_stop_state = STOP_STATE[div].fetch_xor(1 << i, Ordering::SeqCst) ^ (1 << i);
                 let msg = stop_tab_midi_cc_message(div, i, div_stop_state);
                 STOP_STATE_CHANGED.signal(true);
-                OUTBOUND_USB_MIDI_EVENT_BUS.send(msg).await;
+                let _ = OUTBOUND_USB_MIDI_EVENT_BUS.try_send(msg); // again, i get that this could error
                 OUTBOUND_UART_MIDI_EVENT_BUS.send(msg).await;
             }
         }
@@ -231,7 +231,7 @@ async fn scan_pistons(
                 awaiting_save = true;
             } else if i == 1 {
                 // GC piston, implemented as a "fixed preset" with all 0s
-                OUTBOUND_USB_MIDI_EVENT_BUS.send(GC_MESSAGE).await;
+                let _ = OUTBOUND_USB_MIDI_EVENT_BUS.try_send(GC_MESSAGE);
                 // Program changes are NOT emitted on the UART MIDI bus; only the individual CCs are.
                 recall_preset(0).await;
             } else {
@@ -242,7 +242,7 @@ async fn scan_pistons(
                     // Recalling a preset, on the other hand, emits a program change.
                     let program_change =
                         MidiMessage::ProgramChange(MidiChannel::from(4), Program::from(i - 1));
-                    OUTBOUND_USB_MIDI_EVENT_BUS.send(program_change).await;
+                    let _ = OUTBOUND_USB_MIDI_EVENT_BUS.try_send(program_change);
                     // Program changes are NOT emitted on the UART MIDI bus; only the individual CCs are.
                     recall_preset(i - 1).await;
                 }
@@ -386,7 +386,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(usb_midi_driver(spawner, p.USB)).unwrap();
 
     // Not sure if this'll work. I'm sending "MIDI", but i like the higher default baud rate (115200).
-    let uart_tx = uart::UartTx::new_blocking(p.UART0, p.PIN_0, uart::Config::default());
+    let uart_tx = uart::UartTx::new_blocking(p.UART0, p.PIN_16, uart::Config::default());
     spawner.spawn(uart_midi_output(uart_tx)).unwrap();
 
     // Heartbeat task comes last, and happens on the main loop, roughly indicating that all tasks spawned successfully.
