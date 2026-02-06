@@ -12,37 +12,20 @@
 
 use embedded_hal::i2c::I2c;
 
-// type I2c0Bus = Mutex<CriticalSectionRawMutex, rpi2c::I2c<'static, I2C0, rpi2c::Async>>;
-// type I2c0Device<'a> = I2cDevice<'a, CriticalSectionRawMutex, rpi2c::I2c<'a, I2C0, rpi2c::Async>>;
-// type ErrorType = I2cDeviceError<rpi2c::Error>;
-
-// #[derive(Clone, Debug)]
 pub struct MCP23017<I2C: I2c> {
     com: I2C,
     pub address: u8,
 }
 
-// // #[derive(Clone, Copy, Debug)]
-// pub struct MCP23017<I2C: 'static + I2c> {
-//     com: &'static mut I2C,
-//     pub address: u8,
-// }
-
 impl<I2C: I2c> MCP23017<I2C> {
-    // i2c_bus: &mut Mutex<CriticalSectionRawMutex, I2c<'static, I2C0, Async>>
     pub fn new(i2c: I2C, address: u8) -> Self {
         Self { com: i2c, address }
     }
-    // pub fn new(i2c_bus: &'a I2c0Bus, address: u8) -> Self {
-    //     Self { com: I2cDevice::new(i2c_bus), address }
-    // }
 
-    /// Initiates hardware with basic setup.
     pub fn init_hardware(&mut self) -> Result<(), I2C::Error> {
         // set all inputs to defaults on port A and B
         self.write_register(Register::IODIRA, 0xff)?;
         self.write_register(Register::IODIRB, 0xff)?;
-
         Ok(())
     }
 
