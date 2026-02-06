@@ -1,5 +1,5 @@
 [package]
-name = "encoder-rp2350"
+name = "console-bridge"
 version = "0.1.0"
 edition = "2024"
 
