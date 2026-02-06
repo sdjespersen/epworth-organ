@@ -11,13 +11,13 @@ use debouncer::Debouncer;
 use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_rp::gpio::Pull;
-use embassy_rp::peripherals::{I2C0, UART0, USB};
+use embassy_rp::peripherals::{I2C0, USB};
 use embassy_rp::usb;
 use embassy_rp::{
     Peri,
     gpio::{AnyPin, Input, Level, Output},
 };
-use embassy_rp::{bind_interrupts, i2c, uart};
+use embassy_rp::{bind_interrupts, i2c};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use embassy_sync::channel::Channel;
@@ -39,7 +39,6 @@ type I2c0Mcp = MCP23017<I2cDevice<'static, NoopRawMutex, i2c::I2c<'static, I2C0,
 
 bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => usb::InterruptHandler<USB>;
-    UART0_IRQ => uart::InterruptHandler<UART0>;
 });
 
 macro_rules! atomicu16_array {
