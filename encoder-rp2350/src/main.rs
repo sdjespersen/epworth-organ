@@ -358,22 +358,19 @@ async fn usb_midi_driver(spawner: Spawner, usb: Peri<'static, USB>) {
     loop {
         let event = OUTBOUND_USB_MIDI_EVENT_BUS.receive().await;
 
-        match event {
-            // TODO: Figure out if we can use LiveEvent's own `Write` functionality to avoid doing this manually.
+        let midi_data: [u8; 4] = match event {
             LiveEvent::Midi { channel, message } => match message {
-                MidiMessage::Controller { controller, value } => {
-                    let cc_packet = [
-                        0x0B,
-                        u8::from(channel) + 0xB0,
-                        controller.into(),
-                        value.into(),
-                    ];
-                    let _ = midi_class.write_packet(&cc_packet).await;
-                }
-                _ => {}
+                MidiMessage::Controller { controller, value } => [
+                    0x0B,
+                    channel.as_int() | 0xB0,
+                    controller.as_int(),
+                    value.as_int(),
+                ],
+                _ => [0x00; 4],
             },
-            _ => {}
-        }
+            _ => [0x00; 4],
+        };
+        let _ = midi_class.write_packet(&midi_data).await;
     }
 }
 
