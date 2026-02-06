@@ -142,21 +142,23 @@ fn get_mcps(i2c_bus: &'static I2c0Bus) -> [[I2c0Mcp; 2]; 4] {
     })
 }
 
+// TODO: Pack all the pins into a struct? It's too unwieldy right now.
 #[embassy_executor::task]
 async fn flush_stop_state(
     i2c_bus: &'static I2c0Bus,
     data_pin: Peri<'static, AnyPin>,
     clock_pin: Peri<'static, AnyPin>,
     latch_pin: Peri<'static, AnyPin>,
+    oe_pin: Peri<'static, AnyPin>,
 ) {
     let mcps = &mut get_mcps(i2c_bus);
     let mut stops_data_pin = Output::new(data_pin, Level::Low);
     let mut stops_clock_pin = Output::new(clock_pin, Level::Low);
     let mut stops_latch_pin = Output::new(latch_pin, Level::Low);
+    let mut stops_oe_pin = Output::new(oe_pin, Level::High);
 
-    loop {
-        // The loop condition is at the end so that we persist the initial state.
-
+    // Capture logic in a closure because we'll use it once for the intial state and then later in the loop.
+    let mut flush_state = || {
         let stop_states = [
             STOP_STATE[0].load(Ordering::SeqCst),
             STOP_STATE[1].load(Ordering::SeqCst),
@@ -203,13 +205,21 @@ async fn flush_stop_state(
                 .write_gpio(Port::GPIOA, right_half & 0x7F)
                 .unwrap();
         }
+    };
 
+    flush_state();
+
+    stops_oe_pin.set_low();
+
+    loop {
         // Only update when things have changed.
         STOP_STATE_CHANGED.wait().await;
 
         // This is our approach to batching lots of little changes: Wait for a brief interval before reading the stop
         // states.
         Timer::after_millis(1).await;
+
+        flush_state();
     }
 }
 
@@ -404,13 +414,18 @@ async fn main(spawner: Spawner) {
     spawner
         .spawn(flush_stop_state(
             i2c_bus,
-            p.PIN_13.into(),
-            p.PIN_14.into(),
-            p.PIN_15.into(),
+            p.PIN_21.into(),
+            p.PIN_19.into(),
+            p.PIN_20.into(),
+            p.PIN_18.into(),
         ))
         .unwrap();
     spawner
-        .spawn(scan_pistons(p.PIN_2.into(), p.PIN_6.into(), p.PIN_3.into()))
+        .spawn(scan_pistons(
+            p.PIN_11.into(),
+            p.PIN_12.into(),
+            p.PIN_13.into(),
+        ))
         .unwrap();
     spawner.spawn(usb_midi_driver(spawner, p.USB)).unwrap();
 
