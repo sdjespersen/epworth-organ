@@ -11,6 +11,7 @@ use core::sync::atomic::{AtomicU16, Ordering};
 use debouncer::Debouncer;
 use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::Spawner;
+use embassy_rp::flash::Flash;
 use embassy_rp::gpio::Pull;
 use embassy_rp::peripherals::{I2C0, USB};
 use embassy_rp::usb;
@@ -99,16 +100,16 @@ fn stop_tab_midi_cc_message(div: usize, i: u8, div_stop_state: u16) -> LiveEvent
     }
 }
 
-fn save_preset(preset_store: &mut PresetStore, key: u8) {
+async fn save_preset(preset_store: &mut PresetStore<'static>, key: u8) {
     let mut value: [u16; 4] = [0; 4];
     for div in 0..4 {
         value[div] = STOP_STATE[div].load(Ordering::SeqCst);
     }
-    preset_store.save(key, &value);
+    preset_store.save(key, &value).await;
 }
 
-fn recall_preset(preset_store: &PresetStore, key: u8) {
-    let value = preset_store.load(key);
+async fn recall_preset(preset_store: &mut PresetStore<'static>, key: u8) {
+    let value = preset_store.load(key).await;
     for div in 0..4 {
         let div_preset = value[div];
         STOP_STATE[div].store(div_preset, Ordering::SeqCst);
@@ -242,7 +243,7 @@ async fn scan_stop_tab_buttons(i2c_bus: &'static I2c0Bus) {
 
 #[embassy_executor::task]
 async fn scan_pistons(
-    preset_store: &'static mut PresetStore,
+    preset_store: &'static mut PresetStore<'static>,
     load_pin: Peri<'static, AnyPin>,
     clock_pin: Peri<'static, AnyPin>,
     data_pin: Peri<'static, AnyPin>,
@@ -287,11 +288,11 @@ async fn scan_pistons(
                     message: MidiMessage::ProgramChange { program: 0.into() },
                 };
                 let _ = OUTBOUND_USB_MIDI_EVENT_BUS.try_send(gc_message);
-                recall_preset(preset_store, 0);
+                recall_preset(preset_store, 0).await;
             } else {
                 if awaiting_save {
                     // Saving a preset is completely internal; it emits no MIDI events.
-                    save_preset(preset_store, i - 1);
+                    save_preset(preset_store, i - 1).await;
                 } else {
                     // Recalling a preset, on the other hand, emits a program change.
                     let program_change = LiveEvent::Midi {
@@ -301,7 +302,7 @@ async fn scan_pistons(
                         },
                     };
                     let _ = OUTBOUND_USB_MIDI_EVENT_BUS.try_send(program_change);
-                    recall_preset(preset_store, i - 1);
+                    recall_preset(preset_store, i - 1).await;
                 }
             }
         }
@@ -409,7 +410,7 @@ async fn main(spawner: Spawner) {
         .unwrap();
     spawner
         .spawn(scan_pistons(
-            PRESET_STORE.init(PresetStore::new()),
+            PRESET_STORE.init(PresetStore::new(Flash::new(p.FLASH, p.DMA_CH0))),
             p.PIN_11.into(),
             p.PIN_12.into(),
             p.PIN_13.into(),

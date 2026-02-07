@@ -17,4 +17,5 @@ embedded-hal-async = "1.0.0"
 embedded-hal-bus = "0.3.0"
 midly = { version = "0.5.3", default-features = false }
 panic-halt = "1.0.0"
+sequential-storage = { version = "7.1.0", default-features = false }
 static_cell = "2.1.1"
