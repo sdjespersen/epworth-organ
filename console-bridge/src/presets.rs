@@ -55,7 +55,7 @@ impl<'d> PresetStore<'d> {
                     value[i] = ((v >> (i * 16)) & 0xFFFF) as u16;
                 }
             }
-            None => return value, // Return default value if key is not found.
+            None => {}
         };
         value
     }
