@@ -3,6 +3,7 @@
 
 mod debouncer;
 mod mcp23017;
+mod presets;
 
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicU16, Ordering};
@@ -33,6 +34,7 @@ use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::mcp23017::MCP23017;
 use crate::mcp23017::Port;
+use crate::presets::PresetStore;
 
 type I2c0Bus = Mutex<NoopRawMutex, RefCell<i2c::I2c<'static, I2C0, i2c::Blocking>>>;
 type I2c0Mcp = MCP23017<I2cDevice<'static, NoopRawMutex, i2c::I2c<'static, I2C0, i2c::Blocking>>>;
@@ -41,36 +43,20 @@ bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => usb::InterruptHandler<USB>;
 });
 
-macro_rules! atomicu16_array {
-    ($val:expr) => {{
-        [
-            AtomicU16::new($val),
-            AtomicU16::new($val),
-            AtomicU16::new($val),
-            AtomicU16::new($val),
-        ]
-    }};
-}
-
 const B: [u32; 4] = [0x55555555, 0x33333333, 0x0F0F0F0F, 0x00FF00FF];
 const S: [u32; 4] = [1, 2, 4, 8];
 const NIBBLE_REVERSE_LOOKUP: [u8; 16] = [
     0x0, 0x8, 0x4, 0xc, 0x2, 0xa, 0x6, 0xe, 0x1, 0x9, 0x5, 0xd, 0x3, 0xb, 0x7, 0xf,
 ];
 
-static STOP_STATE: [AtomicU16; 4] = atomicu16_array!(0);
-static STOP_STATE_CHANGED: Signal<CriticalSectionRawMutex, bool> = Signal::new();
-// TODO: This should be persistent somehow
-static PRESETS: [[AtomicU16; 4]; 8] = [
-    atomicu16_array!(0),
-    atomicu16_array!(0),
-    atomicu16_array!(0),
-    atomicu16_array!(0),
-    atomicu16_array!(0),
-    atomicu16_array!(0),
-    atomicu16_array!(0),
-    atomicu16_array!(0),
+static STOP_STATE: [AtomicU16; 4] = [
+    AtomicU16::new(0),
+    AtomicU16::new(0),
+    AtomicU16::new(0),
+    AtomicU16::new(0),
 ];
+static STOP_STATE_CHANGED: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+static PRESET_STORE: StaticCell<PresetStore> = StaticCell::new();
 // This channel has a relatively large buffer to accommodate bursts of MIDI messages when recalling presets. If the USB
 // host is slow or disconnected (e.g. in analog-only mode), we don't want to block the entire system.
 static OUTBOUND_USB_MIDI_EVENT_BUS: Channel<CriticalSectionRawMutex, LiveEvent, 128> =
@@ -113,16 +99,18 @@ fn stop_tab_midi_cc_message(div: usize, i: u8, div_stop_state: u16) -> LiveEvent
     }
 }
 
-fn save_preset(value: u8) {
+fn save_preset(preset_store: &mut PresetStore, key: u8) {
+    let mut value: [u16; 4] = [0; 4];
     for div in 0..4 {
-        PRESETS[value as usize][div]
-            .store(STOP_STATE[div].load(Ordering::SeqCst), Ordering::SeqCst);
+        value[div] = STOP_STATE[div].load(Ordering::SeqCst);
     }
+    preset_store.save(key, &value);
 }
 
-async fn recall_preset(value: u8) {
+fn recall_preset(preset_store: &PresetStore, key: u8) {
+    let value = preset_store.load(key);
     for div in 0..4 {
-        let div_preset = PRESETS[value as usize][div].load(Ordering::SeqCst);
+        let div_preset = value[div];
         STOP_STATE[div].store(div_preset, Ordering::SeqCst);
         // Now we need to emit 15 MIDI CCs...skipping i = 0 (LSB) which doesn't correspond to physical hardware
         for i in 1..=15 {
@@ -254,6 +242,7 @@ async fn scan_stop_tab_buttons(i2c_bus: &'static I2c0Bus) {
 
 #[embassy_executor::task]
 async fn scan_pistons(
+    preset_store: &'static mut PresetStore,
     load_pin: Peri<'static, AnyPin>,
     clock_pin: Peri<'static, AnyPin>,
     data_pin: Peri<'static, AnyPin>,
@@ -298,11 +287,11 @@ async fn scan_pistons(
                     message: MidiMessage::ProgramChange { program: 0.into() },
                 };
                 let _ = OUTBOUND_USB_MIDI_EVENT_BUS.try_send(gc_message);
-                recall_preset(0).await;
+                recall_preset(preset_store, 0);
             } else {
                 if awaiting_save {
                     // Saving a preset is completely internal; it emits no MIDI events.
-                    save_preset(i - 1);
+                    save_preset(preset_store, i - 1);
                 } else {
                     // Recalling a preset, on the other hand, emits a program change.
                     let program_change = LiveEvent::Midi {
@@ -312,7 +301,7 @@ async fn scan_pistons(
                         },
                     };
                     let _ = OUTBOUND_USB_MIDI_EVENT_BUS.try_send(program_change);
-                    recall_preset(i - 1).await;
+                    recall_preset(preset_store, i - 1);
                 }
             }
         }
@@ -420,6 +409,7 @@ async fn main(spawner: Spawner) {
         .unwrap();
     spawner
         .spawn(scan_pistons(
+            PRESET_STORE.init(PresetStore::new()),
             p.PIN_11.into(),
             p.PIN_12.into(),
             p.PIN_13.into(),
