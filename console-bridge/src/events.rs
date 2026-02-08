@@ -4,14 +4,7 @@ pub enum Division {
     Great,
     Choir,
     Pedal,
-    General,
 }
-
-// impl Division {
-//     pub fn from(i: usize) -> Self {
-
-//     }
-// }
 
 impl Into<usize> for Division {
     fn into(self) -> usize {
@@ -20,7 +13,6 @@ impl Into<usize> for Division {
             Division::Great => 1,
             Division::Choir => 2,
             Division::Pedal => 3,
-            Division::General => 4,
         }
     }
 }
@@ -32,150 +24,115 @@ impl Into<Division> for usize {
             1 => Division::Great,
             2 => Division::Choir,
             3 => Division::Pedal,
-            4 => Division::General,
             // TODO: Define a proper type for this so we know it's always valid.
             _ => panic!("Invalid division index: {}", self),
         }
     }
 }
 
-// #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
-// pub enum EventType {
-//     NoteOff,
-//     NoteOn,
-//     StopOff,
-//     StopOn,
-//     StopToggle,
-//     RecallPreset,
-//     GeneralCancel,
-//     EnableSave,
-//     Expression,
-// }
+impl Into<u8> for Division {
+    fn into(self) -> u8 {
+        let v: usize = self.into();
+        v as u8
+    }
+}
+
+impl Into<Division> for u8 {
+    fn into(self) -> Division {
+        let v: usize = self.into();
+        v.into()
+    }
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum EventSource {
-    Indigenous,
-    Usb,
-    Uart,
+    Local,
+    External,
 }
 
 // Represents an event on the organ. Most of these map pretty directly to MIDI messages, but some (like `StopToggle` and
-// `EnableSave`) do not.
+// `EnableSave`) do not. The proprietary nature allows us to (a) pass messages that don't have a clear analog in the
+// MIDI spec and (b) pack every message we'll ever use into only 2 bytes.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum Event {
-    NoteOff {
-        src: EventSource,
-        div: Division,
-        key: u8,
-        vel: u8,
-    },
-    NoteOn {
-        src: EventSource,
-        div: Division,
-        key: u8,
-        vel: u8,
-    },
-    StopOff {
-        src: EventSource,
-        div: Division,
-        idx: u8,
-    },
-    StopOn {
-        src: EventSource,
-        div: Division,
-        idx: u8,
-    },
-    StopToggle {
-        src: EventSource,
-        div: Division,
-        idx: u8,
-    },
-    RecallPreset {
-        src: EventSource,
-        idx: u8,
-    },
-    GeneralCancel {
-        src: EventSource,
-    },
-    EnableSave {
-        src: EventSource,
-        val: bool,
-    },
-    Expression {
-        src: EventSource,
-        div: Division,
-        value: u8,
-    },
+    NoteOff { div: Division, key: u8 },
+    NoteOn { div: Division, key: u8 },
+    StopOff { div: Division, idx: u8 },
+    StopOn { div: Division, idx: u8 },
+    StopToggle { div: Division, idx: u8 },
+    GeneralCancel {},
+    RecallPreset { idx: u8 },
+    EnableSave { val: bool },
+    Expression { div: Division, value: u8 },
+    Crescendo { value: u8 },
 }
 
-// impl Event {
-//     pub fn new(source: EventSource, division: Division, event_type: EventType, value: u8) -> Self {
-//         Self {
-//             source,
-//             division,
-//             event_type,
-//             value,
-//         }
-//     }
+impl Event {
+    pub fn serialize(&self, buf: &mut [u8]) {
+        match self {
+            Event::NoteOff { div, key } => {
+                buf[0] = 0x00 | *div as u8;
+                buf[1] = *key;
+            }
+            Event::NoteOn { div, key } => {
+                buf[0] = 0x10 | *div as u8;
+                buf[1] = *key;
+            }
+            Event::StopOff { div, idx } => {
+                buf[0] = 0x20 | *div as u8;
+                buf[1] = *idx;
+            }
+            Event::StopOn { div, idx } => {
+                buf[0] = 0x30 | *div as u8;
+                buf[1] = *idx;
+            }
+            Event::StopToggle { div, idx } => {
+                buf[0] = 0x40 | *div as u8;
+                buf[1] = *idx;
+            }
+            Event::GeneralCancel {} => {
+                buf[0] = 0x50;
+                buf[1] = 0x00;
+            }
+            Event::RecallPreset { idx } => {
+                buf[0] = 0x60;
+                buf[1] = *idx;
+            }
+            Event::EnableSave { val } => {
+                buf[0] = 0x70;
+                buf[1] = if *val { 1 } else { 0 };
+            }
+            Event::Expression { div, value } => {
+                buf[0] = 0x80 | *div as u8;
+                buf[1] = *value;
+            }
+            Event::Crescendo { value } => {
+                buf[0] = 0x90;
+                buf[1] = *value;
+            }
+        }
+    }
 
-//     pub fn div_usize(&self) -> usize {
-//         self.division.to_usize()
-//     }
-// }
+    pub fn parse(status: u8, value: u8) -> Event {
+        let div = (status & 0x0F).into();
+        match status & 0xF0 {
+            0x00 => Event::NoteOff { div, key: value },
+            0x10 => Event::NoteOn { div, key: value },
+            0x20 => Event::StopOff { div, idx: value },
+            0x30 => Event::StopOn { div, idx: value },
+            0x40 => Event::StopToggle { div, idx: value },
+            0x50 => Event::GeneralCancel {},
+            0x60 => Event::RecallPreset { idx: value },
+            0x70 => Event::EnableSave { val: value == 1 },
+            0x80 => Event::Expression { div, value },
+            0x90 => Event::Crescendo { value },
+            _ => panic!("Invalid event status: {:02X}", status),
+        }
+    }
+}
 
-// pub enum Event {
-//     /// Stop playing a note.
-//     NoteOff {
-//         /// The MIDI key to stop playing.
-//         key: u7,
-//         /// The velocity with which to stop playing it.
-//         vel: u7,
-//     },
-//     /// Start playing a note.
-//     NoteOn {
-//         /// The key to start playing.
-//         key: u7,
-//         /// The velocity (strength) with which to press it.
-//         ///
-//         /// Note that by convention a `NoteOn` message with a velocity of 0 is equivalent to a
-//         /// `NoteOff`.
-//         vel: u7,
-//     },
-//     /// Modify the velocity of a note after it has been played.
-//     Aftertouch {
-//         /// The key for which to modify its velocity.
-//         key: u7,
-//         /// The new velocity for the key.
-//         vel: u7,
-//     },
-//     /// Modify the value of a MIDI controller.
-//     Controller {
-//         /// The controller to modify.
-//         ///
-//         /// See the MIDI spec for the meaning of each index.
-//         controller: u7,
-//         /// The value to set it to.
-//         value: u7,
-//     },
-//     /// Change the program (also known as instrument) for a channel.
-//     ProgramChange {
-//         /// The new program (instrument) to use for the channel.
-//         program: u7,
-//     },
-//     /// Change the note velocity of a whole channel at once, without starting new notes.
-//     ChannelAftertouch {
-//         /// The new velocity for all notes currently playing in the channel.
-//         vel: u7,
-//     },
-//     /// Set the pitch bend value for the entire channel.
-//     PitchBend {
-//         /// The new pitch-bend value.
-//         bend: PitchBend,
-//     },
-// }
-
-// #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
-// pub struct SourcedEvent {
-//     pub
-//     pub event: Event,
-// }
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
+pub struct EventIn {
+    pub src: EventSource,
+    pub event: Event,
+}

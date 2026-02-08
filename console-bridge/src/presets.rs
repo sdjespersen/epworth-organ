@@ -28,35 +28,24 @@ impl<'d> PresetStore<'d> {
         }
     }
 
-    pub async fn save(&mut self, key: u8, value: &[u16; 4]) {
-        // Value type needs to be coerced to u64.
-        let mut store_value = 0u64;
-        for i in 0..4 {
-            store_value |= (value[i] as u64) << (i * 16);
-        }
+    pub async fn save(&mut self, key: u8, value: &u64) {
         let mut data_buffer = [0u8; PAGE_SIZE];
         self.storage
-            .store_item(&mut data_buffer, &key, &store_value)
+            .store_item(&mut data_buffer, &key, value)
             .await
             .unwrap();
     }
 
-    pub async fn load(&mut self, key: u8) -> [u16; 4] {
-        let mut value = [0u16; 4];
+    pub async fn load(&mut self, key: u8) -> u64 {
         let mut data_buffer = [0u8; PAGE_SIZE];
-        let loaded_value = self
+        let value = self
             .storage
             .fetch_item::<u64>(&mut data_buffer, &key)
             .await
             .unwrap();
-        match loaded_value {
-            Some(v) => {
-                for i in 0..4 {
-                    value[i] = ((v >> (i * 16)) & 0xFFFF) as u16;
-                }
-            }
-            None => {}
-        };
-        value
+        match value {
+            Some(v) => v,
+            None => 0u64,
+        }
     }
 }
