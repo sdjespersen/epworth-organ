@@ -206,13 +206,10 @@ async fn scan_stop_tab_buttons(i2c_bus: &'static I2c0Bus) {
 
             for i in stop_tab_button_debouncers[div].falling_edges() {
                 MAIN_EVENT_BUS
-                    .send(EventIn {
-                        src: EventSource::Local,
-                        event: Event::StopToggle {
-                            div: div.into(),
-                            idx: i,
-                        },
-                    })
+                    .send(EventIn(
+                        EventSource::Local,
+                        Event::StopToggle(div.into(), i),
+                    ))
                     .await;
             }
         }
@@ -257,24 +254,15 @@ async fn scan_pistons(
         for i in piston_debouncer.falling_edges() {
             if i == 0 {
                 MAIN_EVENT_BUS
-                    .send(EventIn {
-                        src: EventSource::Local,
-                        event: Event::EnableSave { val: true },
-                    })
+                    .send(EventIn(EventSource::Local, Event::EnableSave(true)))
                     .await;
             } else if i == 1 {
                 MAIN_EVENT_BUS
-                    .send(EventIn {
-                        src: EventSource::Local,
-                        event: Event::GeneralCancel {},
-                    })
+                    .send(EventIn(EventSource::Local, Event::GeneralCancel()))
                     .await;
             } else {
                 MAIN_EVENT_BUS
-                    .send(EventIn {
-                        src: EventSource::Local,
-                        event: Event::RecallPreset { idx: i },
-                    })
+                    .send(EventIn(EventSource::Local, Event::RecallPreset(i)))
                     .await;
             }
         }
@@ -282,10 +270,7 @@ async fn scan_pistons(
         for i in piston_debouncer.rising_edges() {
             if i == 0 {
                 MAIN_EVENT_BUS
-                    .send(EventIn {
-                        src: EventSource::Local,
-                        event: Event::EnableSave { val: false },
-                    })
+                    .send(EventIn(EventSource::Local, Event::EnableSave(false)))
                     .await;
             }
         }
@@ -357,11 +342,9 @@ async fn uart_reader(mut uart_rx: uart::UartRx<'static, uart::Async>) {
 
         match uart_rx.read(&mut buf).await {
             Ok(_) => {
-                let e = EventIn {
-                    src: EventSource::Local,
-                    event: Event::parse(buf[0], buf[1]),
-                };
-                MAIN_EVENT_BUS.send(e).await;
+                MAIN_EVENT_BUS
+                    .send(EventIn(EventSource::Local, Event::parse(buf[0], buf[1])))
+                    .await;
             }
             Err(e) => {
                 defmt::warn!("Error reading from UART: {:?}", e);
@@ -401,16 +384,8 @@ async fn main_event_handler(preset_store: &'static mut PresetStore<'static>) {
     loop {
         let event_in = MAIN_EVENT_BUS.receive().await;
 
-        match event_in.src {
-            EventSource::Local => {
-                // Echo to USB then! Except it's not that simple...some events need logical translation, like
-                // StopToggle, which we don't know means off or on without access to the current state of the stops.
-            }
-            _ => {}
-        }
-
-        match event_in.event {
-            Event::StopToggle { div, idx } => {
+        match event_in.1 {
+            Event::StopToggle(div, idx) => {
                 // TODO: This is insufficient. Toggling a stop may produce NoteOn or NoteOff events, too! We need to
                 // abstract this away into a pure business logic class that handles all that.
                 stop_state ^= 1 << (16 * div as u8 + idx);
@@ -419,12 +394,12 @@ async fn main_event_handler(preset_store: &'static mut PresetStore<'static>) {
                 let msg = stop_tab_midi_cc_message(div.into(), idx, div_stop_state);
                 let _ = OUTBOUND_USB_MIDI_EVENT_BUS.try_send(msg);
             }
-            Event::GeneralCancel {} => {
+            Event::GeneralCancel() => {
                 stop_state = 0;
                 STOP_STATE.signal(stop_state);
                 // TODO: All sorts of MIDI messages. GC, "AllNotesOff", etc.
             }
-            Event::RecallPreset { idx } => {
+            Event::RecallPreset(idx) => {
                 if awaiting_save {
                     // Saving a preset is completely internal; it emits no MIDI events.
                     preset_store.save(idx, &stop_state).await;
@@ -449,7 +424,7 @@ async fn main_event_handler(preset_store: &'static mut PresetStore<'static>) {
                     }
                 }
             }
-            Event::EnableSave { val } => {
+            Event::EnableSave(val) => {
                 awaiting_save = val;
             }
             _ => {}
