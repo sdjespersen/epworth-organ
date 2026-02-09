@@ -2,6 +2,7 @@
 pub mod command;
 pub mod debouncer;
 pub mod event;
+pub mod midi;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum Division {

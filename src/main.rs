@@ -242,21 +242,9 @@ async fn usb_midi(spawner: Spawner, usb: Peri<'static, USB>) {
     midi_class.wait_connection().await;
 
     loop {
-        let _ = USB_EVENT_BUS.receive().await;
-
-        // let midi_data: [u8; 4] = match event {
-        //     LiveEvent::Midi { channel, message } => match message {
-        //         MidiMessage::Controller { controller, value } => [
-        //             0x0B,
-        //             channel.as_int() | 0xB0,
-        //             controller.as_int(),
-        //             value.as_int(),
-        //         ],
-        //         _ => [0x00; 4],
-        //     },
-        //     _ => [0x00; 4],
-        // };
-        // let _ = midi_class.write_packet(&midi_data).await;
+        let event = USB_EVENT_BUS.receive().await;
+        let midi_data: [u8; 4] = event.to_usb_midi();
+        let _ = midi_class.write_packet(&midi_data).await;
     }
 }
 
