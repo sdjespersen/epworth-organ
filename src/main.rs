@@ -315,34 +315,58 @@ async fn main_event_handler(preset_store: &'static mut PresetStore<'static>) {
     loop {
         let command = COMMAND_BUS.receive().await;
 
-        match command.cmd {
+        // TODO: Consider whether we can remove the UART_EVENT_BUS.send calls from inside the match.
+        let usb_event: Option<Event> = match command.cmd {
             CommandType::StopToggle(div, idx) => {
-                stop_state ^= 1 << (16 * div as u8 + idx);
+                let shift = 16 * div as u8 + idx;
+                stop_state ^= 1 << shift;
                 LATEST_STOP_STATE.signal(stop_state);
-                // let div_stop_state = (stop_state >> (16 * div as u8) & 0xFFFF) as u16;
-                // let msg = stop_tab_midi_cc_message(div.into(), idx, div_stop_state);
-                // let _ = USB_EVENT_BUS.try_send(msg);
+                let ev = if stop_state >> shift & 1 == 1 {
+                    Event::StopOn(div, idx)
+                } else {
+                    Event::StopOff(div, idx)
+                };
+                UART_EVENT_BUS.send(ev).await;
+                Some(ev)
             }
             CommandType::GeneralCancel() => {
                 stop_state = 0;
                 LATEST_STOP_STATE.signal(stop_state);
-                // TODO: All sorts of MIDI messages. GC, "AllNotesOff", etc.
+                UART_EVENT_BUS.send(Event::GeneralCancel()).await;
+                Some(Event::GeneralCancel())
             }
             CommandType::RecallPreset(idx) => {
                 if awaiting_save {
-                    // Saving a preset is completely internal; it emits no MIDI events.
+                    // Saving a preset is internal; it emits no events.
                     preset_store.save(idx, &stop_state).await;
+                    // Safety: Disengage save mode if we've already written one preset.
+                    awaiting_save = false;
+                    None
                 } else {
                     stop_state = preset_store.load(idx).await;
                     LATEST_STOP_STATE.signal(stop_state);
-                    // let _ = USB_EVENT_BUS.try_send(program_change);
-                    // Event::StopStateChanged(stop_state);
+                    let ev = Event::StopStateChanged(stop_state);
+                    UART_EVENT_BUS.send(ev).await;
+                    Some(ev)
                 }
             }
             CommandType::EnableSave(val) => {
                 awaiting_save = val;
+                None
             }
-            _ => {}
+            _ => {
+                None
+            }
+        };
+
+        // Enqueue events onto the USB bus, as long as the command didn't originate from USB.
+        match usb_event {
+            Some(e) => {
+                if !command.external {
+                    let _ = USB_EVENT_BUS.try_send(e);
+                }
+            }
+            None => {}
         }
     }
 }
