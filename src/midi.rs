@@ -1,49 +1,83 @@
-use midly::MidiMessage;
-use midly::live::LiveEvent;
-use midly::num::{u4, u7};
+/// USB MIDI interface for the Epworth organ.
+use core::iter;
 
 use crate::event::Event;
 
-fn _stop_tab_midi_cc_message(div: usize, i: u8, div_stop_state: u16) -> LiveEvent<'static> {
-    let mut midi_val: u7 = 0.into();
-    if div_stop_state >> i & 1 == 1 {
-        midi_val = u7::max_value();
+enum MidiPacketStreamInner {
+    Once(iter::Once<[u8; 4]>),
+    ForStopStateChanged { stop_state: u64, counter: u8 },
+}
+
+impl Iterator for MidiPacketStreamInner {
+    type Item = [u8; 4];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Once(inner) => inner.next(),
+            Self::ForStopStateChanged {
+                stop_state,
+                counter,
+            } => {
+                if *counter < 60 {
+                    // Then, all the stop tab changes
+                    let div = *counter / 15;
+                    let idx = *counter % 15 + 1;
+                    let shift = div * 16 + idx;
+                    let val: u8 = if *stop_state >> shift & 1 == 1 {
+                        127
+                    } else {
+                        0
+                    };
+                    *counter += 1;
+                    Some([0x0B, div | 0xB0, 117 - idx, val])
+                } else {
+                    None
+                }
+            }
+        }
     }
-    LiveEvent::Midi {
-        channel: u4::from(div as u8),
-        message: MidiMessage::Controller {
-            controller: (117 - i).into(),
-            value: midi_val,
-        },
+
+    // TODO: Consider implementing size_hint
+}
+
+// A custom type that implements Iterator<[u8; 4]>. Useful because certain events result in multiple MIDI packets.
+pub struct MidiPacketStream(MidiPacketStreamInner);
+
+impl MidiPacketStream {
+    pub fn of(packet: [u8; 4]) -> Self {
+        Self(MidiPacketStreamInner::Once(iter::once(packet)))
+    }
+
+    pub fn for_stop_state_changed(stop_state: u64) -> Self {
+        Self(MidiPacketStreamInner::ForStopStateChanged {
+            stop_state,
+            counter: 0,
+        })
     }
 }
 
-// Logic for preset recall
-// let program_change = LiveEvent::Midi {
-//     channel: 5.into(),
-//     message: MidiMessage::ProgramChange {
-//         program: idx.into(),
-//     },
-// };
-// for div in 0..4 {
-//     let div_state = ((stop_state >> (16 * div)) & 0xFFFF) as u16;
-//     // Now we need to emit 15 MIDI CCs...skipping i = 0 (LSB) which doesn't correspond to physical hardware
-//     for i in 1..=15 {
-//         let msg = stop_tab_midi_cc_message(div, i, div_state);
-//         let _ = USB_EVENT_BUS.try_send(msg); // yes, yes, this could return error
-//     }
-// }
+impl Iterator for MidiPacketStream {
+    type Item = [u8; 4];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
+}
 
 impl Event {
-    pub fn to_usb_midi(self) -> [u8; 4] {
+    pub fn to_usb_midi_packets(self) -> MidiPacketStream {
         match self {
             Event::StopOn(div, idx) => {
-                [0x0B, div as u8 | 0xB0, 117 - idx, 0xFF]
+                MidiPacketStream::of([0x0B, div as u8 | 0xB0, 117 - idx, 0xFF])
             }
             Event::StopOff(div, idx) => {
-                [0x0B, div as u8 | 0xB0, 117 - idx, 0x00]
+                MidiPacketStream::of([0x0B, div as u8 | 0xB0, 117 - idx, 0x00])
             }
-            _ => [0x00; 4],
+            Event::PresetRecalled(idx) => MidiPacketStream::of([0x0C, 0xC4, idx, 0x00]),
+            Event::StopStateChanged(stop_state) => {
+                MidiPacketStream::for_stop_state_changed(stop_state)
+            }
+            _ => MidiPacketStream::of([0x00; 4]),
         }
     }
 }

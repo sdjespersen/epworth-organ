@@ -7,6 +7,7 @@ pub enum Event {
     StopOff(Division, u8),
     StopOn(Division, u8),
     StopStateChanged(u64),
+    PresetRecalled(u8),
     GeneralCancel(),
     RecallPreset(u8),
     Expression(Division, u8),
