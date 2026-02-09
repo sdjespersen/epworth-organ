@@ -77,6 +77,11 @@ impl Event {
             Event::StopStateChanged(stop_state) => {
                 MidiPacketStream::for_stop_state_changed(stop_state)
             }
+            Event::GeneralCancel() => {
+                // Is this right? Some VPOs might have a general cancel button. Could be similar to preset recall.
+                // Also, probably should send an "all notes off" message.
+                MidiPacketStream::for_stop_state_changed(0)
+            }
             _ => MidiPacketStream::of([0x00; 4]),
         }
     }
