@@ -271,9 +271,12 @@ async fn uart_reader(mut uart_rx: uart::UartRx<'static, uart::Async>) {
 }
 
 #[embassy_executor::task]
-async fn uart_writer(mut _uart_tx: uart::UartTx<'static, uart::Async>) {
+async fn uart_writer(mut uart_tx: uart::UartTx<'static, uart::Async>) {
     loop {
-        let _ = UART_EVENT_BUS.receive().await;
+        let event = UART_EVENT_BUS.receive().await;
+        let mut buf = [0u8; 10];
+        let written = event.serialize(&mut buf);
+        let _ = uart_tx.write(&buf[..written]).await;
     }
 }
 

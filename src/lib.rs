@@ -22,3 +22,15 @@ impl Into<u8> for Division {
         }
     }
 }
+
+impl From<u8> for Division {
+    fn from(val: u8) -> Self {
+        match val {
+            0 => Division::Swell,
+            1 => Division::Great,
+            2 => Division::Choir,
+            3 => Division::Pedal,
+            _ => panic!("Invalid value found for division!")
+        }
+    }
+}
