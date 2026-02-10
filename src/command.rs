@@ -21,9 +21,9 @@ pub enum Command {
 
 impl Command {
     pub fn parse(buf: &[u8]) -> Option<Self> {
-        let ev_type = buf[0] & 0xF0;
+        let cmd_type = buf[0] & 0xF0;
         let div = Division::from(buf[0] & 0x0F);
-        match ev_type {
+        match cmd_type {
             0x00 => Some(Self::KeyUp(div, buf[1])),
             0x10 => Some(Self::KeyDown(div, buf[1])),
             0x20 => Some(Self::StopOff(div, buf[1])),

@@ -4,31 +4,28 @@
 mod mcp23017;
 mod presets;
 
+use defmt_rtt as _; // global logger
+use panic_probe as _;
+
 use core::cell::RefCell;
 
 use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_rp::flash::Flash;
-use embassy_rp::gpio::Pull;
+use embassy_rp::gpio::{AnyPin, Input, Level, Output, Pull};
 use embassy_rp::peripherals::{I2C0, UART0, USB};
-use embassy_rp::{
-    Peri,
-    gpio::{AnyPin, Input, Level, Output},
-};
-use embassy_rp::{bind_interrupts, i2c};
-use embassy_rp::{uart, usb};
+use embassy_rp::{Peri, bind_interrupts, i2c, uart, usb};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_time::Timer;
 use embassy_usb::class::midi::MidiClass;
-use embassy_usb::{Builder, Config as UsbConfig};
+use embassy_usb::{Builder as UsbBuilder, Config as UsbConfig};
 use epworth_organ::Division;
 use epworth_organ::command::{Command, CommandSource};
 use epworth_organ::debouncer::Debouncer;
 use epworth_organ::event::Event;
-use panic_halt as _;
 use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::mcp23017::MCP23017;
@@ -223,7 +220,7 @@ async fn usb_midi(spawner: Spawner, usb: Peri<'static, USB>) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
 
-    let mut builder = Builder::new(
+    let mut builder = UsbBuilder::new(
         driver,
         config,
         USB_CONFIG_DESCRIPTOR.take(),
@@ -252,20 +249,11 @@ async fn usb_midi(spawner: Spawner, usb: Peri<'static, USB>) {
 
 #[embassy_executor::task]
 async fn uart_reader(mut uart_rx: uart::UartRx<'static, uart::Async>) {
+    let mut buf: [u8; 2] = [0; 2];
     loop {
-        // All events on UART are proprietary 2-byte messages, as defined in the Event struct.
-        let mut buf: [u8; 2] = [0; 2];
-
-        match uart_rx.read(&mut buf).await {
-            Ok(_) => {
-                // TODO
-                // COMMAND_BUS
-                //     .send(EventIn(EventSource::Local, Event::parse(buf[0], buf[1])))
-                //     .await;
-            }
-            Err(e) => {
-                defmt::warn!("Error reading from UART: {:?}", e);
-            }
+        let _ = uart_rx.read(&mut buf[..]).await;
+        if let Some(cmd) = Command::parse(&buf[..]) {
+            COMMAND_BUS.send((cmd, CommandSource::Local)).await
         }
     }
 }
@@ -308,6 +296,11 @@ async fn main_event_handler(preset_store: &'static mut PresetStore<'static>) {
     loop {
         let (command, src) = COMMAND_BUS.receive().await;
 
+        // This is the guts of the primary encoder MCU. All commands issued to the organ go through this event loop in
+        // order to affect any state on the organ. Some commands pass through essentially untouched, while others may
+        // not result in any outbound events. The 0-2 events resulting from processing the command are then sent to:
+        // - the decoder over UART, always
+        // - a connected computer via MIDI over USB, only if the command originated locally
         let (e1, e2) = match command {
             Command::KeyUp(div, value) => (Some(Event::NoteOff(div, value)), None),
             Command::KeyDown(div, value) => (Some(Event::NoteOn(div, value)), None),
@@ -410,6 +403,8 @@ async fn main(spawner: Spawner) {
         ))
         .unwrap();
     spawner.spawn(usb_midi(spawner, p.USB)).unwrap();
+
+    defmt::info!("All tasks spawned.");
 
     // Heartbeat task comes last, and happens on the main loop, roughly indicating that all tasks spawned successfully.
     let mut led = Output::new(p.PIN_25, Level::Low);
