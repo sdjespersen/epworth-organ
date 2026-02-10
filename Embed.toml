@@ -1,0 +1,5 @@
+[default.general]
+chip = "RP235X"
+
+[default.rtt]
+enabled = true

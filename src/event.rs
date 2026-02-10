@@ -6,7 +6,6 @@ pub enum Event {
     NoteOn(Division, u8),
     StopOff(Division, u8),
     StopOn(Division, u8),
-    StopStateChanged(u64),
     PresetRecalled(u8),
     GeneralCancel(),
     Expression(Division, u8),
@@ -14,52 +13,18 @@ pub enum Event {
 }
 
 impl Event {
-    /// Serializes the event to the provided buffer and returns the number of bytes written.
-    pub fn serialize(self, buf: &mut [u8]) -> usize {
-        // Can we enforce the buffer size?
+    /// Serializes the event to 2 bytes.
+    pub fn serialize(self) -> [u8; 2] {
         match self {
-            Self::NoteOff(div, value) => {
-                buf[0] = 0x00 | div as u8;
-                buf[1] = value;
-            }
-            Self::NoteOn(div, value) => {
-                buf[0] = 0x10 | div as u8;
-                buf[1] = value;
-            }
-            Self::StopOff(div, value) => {
-                buf[0] = 0x20 | div as u8;
-                buf[1] = value;
-            }
-            Self::StopOn(div, value) => {
-                buf[0] = 0x30 | div as u8;
-                buf[1] = value;
-            }
-            Self::StopStateChanged(value) => {
-                buf[0] = 0x40;
-                for i in 0..8 {
-                    buf[i + 1] = ((value >> 8 * i) & 0xFF) as u8;
-                }
-                return 9;
-            }
-            Self::PresetRecalled(value) => {
-                buf[0] = 0x50;
-                buf[1] = value;
-            }
-            Self::GeneralCancel() => {
-                buf[0] = 0x60;
-                return 1;
-            }
-            Self::Expression(div, value) => {
-                buf[0] = 0x70 | div as u8;
-                buf[1] = value;
-            }
-            Self::Crescendo(value) => {
-                buf[0] = 0x80;
-                buf[1] = value;
-            }
-        };
-        // Events take up exactly 2 bytes, unless otherwise specified.
-        2
+            Self::NoteOff(div, value) => [0x00 | div as u8, value],
+            Self::NoteOn(div, value) => [0x10 | div as u8, value],
+            Self::StopOff(div, value) => [0x20 | div as u8, value],
+            Self::StopOn(div, value) => [0x30 | div as u8, value],
+            Self::PresetRecalled(value) => [0x40, value],
+            Self::GeneralCancel() => [0x50, 0x00],
+            Self::Expression(div, value) => [0x60 | div as u8, value],
+            Self::Crescendo(value) => [0x70, value],
+        }
     }
 
     pub fn parse(buf: &[u8]) -> Option<Self> {
@@ -70,19 +35,10 @@ impl Event {
             0x10 => Some(Self::NoteOn(div, buf[1])),
             0x20 => Some(Self::StopOff(div, buf[1])),
             0x30 => Some(Self::StopOn(div, buf[1])),
-            0x40 => {
-                let mut value = 0u64;
-                for i in 1..=7 {
-                    value |= buf[i] as u64;
-                    value <<= 8;
-                }
-                value |= buf[8] as u64;
-                Some(Self::StopStateChanged(value))
-            }
-            0x50 => Some(Self::PresetRecalled(buf[1])),
-            0x60 => Some(Self::GeneralCancel()),
-            0x70 => Some(Self::Expression(div, buf[1])),
-            0x80 => Some(Self::Crescendo(buf[1])),
+            0x40 => Some(Self::PresetRecalled(buf[1])),
+            0x50 => Some(Self::GeneralCancel()),
+            0x60 => Some(Self::Expression(div, buf[1])),
+            0x70 => Some(Self::Crescendo(buf[1])),
             _ => None,
         }
     }
