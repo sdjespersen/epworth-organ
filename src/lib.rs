@@ -1,4 +1,4 @@
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 pub mod command;
 pub mod debouncer;
 pub mod event;
@@ -30,7 +30,7 @@ impl From<u8> for Division {
             1 => Division::Great,
             2 => Division::Choir,
             3 => Division::Pedal,
-            _ => panic!("Invalid value found for division!")
+            _ => panic!("Invalid value found for division!"),
         }
     }
 }

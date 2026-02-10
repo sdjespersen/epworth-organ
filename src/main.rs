@@ -308,8 +308,19 @@ async fn main_event_handler(preset_store: &'static mut PresetStore<'static>) {
     loop {
         let (command, src) = COMMAND_BUS.receive().await;
 
-        // TODO: Should we make this pub/sub? I notice we're always enqueueing on 2 event buses.
-        match command {
+        let (e1, e2) = match command {
+            Command::KeyUp(div, value) => (Some(Event::NoteOff(div, value)), None),
+            Command::KeyDown(div, value) => (Some(Event::NoteOn(div, value)), None),
+            Command::StopOff(div, idx) => {
+                stop_state &= !(1 << 16 * div as u8 + idx);
+                LATEST_STOP_STATE.signal(stop_state);
+                (Some(Event::StopOff(div, idx)), None)
+            }
+            Command::StopOn(div, idx) => {
+                stop_state |= 1 << 16 * div as u8 + idx;
+                LATEST_STOP_STATE.signal(stop_state);
+                (Some(Event::StopOn(div, idx)), None)
+            }
             Command::StopToggle(div, idx) => {
                 let shift = 16 * div as u8 + idx;
                 stop_state ^= 1 << shift;
@@ -319,19 +330,12 @@ async fn main_event_handler(preset_store: &'static mut PresetStore<'static>) {
                 } else {
                     Event::StopOff(div, idx)
                 };
-                UART_EVENT_BUS.send(ev).await;
-                if src == CommandSource::Local {
-                    let _ = USB_EVENT_BUS.try_send(ev);
-                }
+                (Some(ev), None)
             }
             Command::GeneralCancel() => {
                 stop_state = 0;
                 LATEST_STOP_STATE.signal(stop_state);
-                let ev = Event::GeneralCancel();
-                UART_EVENT_BUS.send(ev).await;
-                if src == CommandSource::Local {
-                    let _ = USB_EVENT_BUS.try_send(ev);
-                }
+                (Some(Event::GeneralCancel()), None)
             }
             Command::RecallPreset(idx) => {
                 if awaiting_save {
@@ -339,24 +343,32 @@ async fn main_event_handler(preset_store: &'static mut PresetStore<'static>) {
                     preset_store.save(idx, &stop_state).await;
                     // Safety: Disengage save mode if we've already written one preset.
                     awaiting_save = false;
+                    (None, None)
                 } else {
                     stop_state = preset_store.load(idx).await;
                     LATEST_STOP_STATE.signal(stop_state);
-                    let recall_ev = Event::PresetRecalled(idx);
-                    let ssc_ev = Event::StopStateChanged(stop_state);
-                    UART_EVENT_BUS.send(recall_ev).await;
-                    UART_EVENT_BUS.send(ssc_ev).await;
-                    if src == CommandSource::Local {
-                        let _ = USB_EVENT_BUS.try_send(recall_ev);
-                        let _ = USB_EVENT_BUS.try_send(ssc_ev);
-                    }
+                    (
+                        Some(Event::PresetRecalled(idx)),
+                        Some(Event::StopStateChanged(stop_state)),
+                    )
                 }
             }
             Command::EnableSave(val) => {
                 awaiting_save = val;
+                (None, None)
             }
-            _ => {}
+            _ => (None, None),
         };
+
+        // TODO: Should we make this pub/sub? I notice we're always enqueueing on 2 event buses.
+        for e in [e1, e2] {
+            if let Some(event) = e {
+                UART_EVENT_BUS.send(event).await;
+                if src == CommandSource::Local {
+                    let _ = USB_EVENT_BUS.try_send(event);
+                }
+            }
+        }
     }
 }
 
