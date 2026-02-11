@@ -2,11 +2,11 @@
 pub mod command;
 pub mod debouncer;
 pub mod event;
+pub mod uart_midi;
 
-use defmt_rtt as _;
-use serde::{Deserialize, Serialize}; // global logger
+use defmt_rtt as _; // global logger
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum Division {
     Swell,
     Great,

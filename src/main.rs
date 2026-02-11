@@ -6,6 +6,8 @@ mod presets;
 mod usb;
 
 use embassy_sync::signal::Signal;
+use heapless::spsc::Queue;
+use midly::stream::MidiStream;
 use panic_probe as _;
 
 use core::cell::RefCell;
@@ -23,12 +25,12 @@ use embassy_time::Timer;
 use embassy_usb::class::midi as usb_midi;
 use embassy_usb::class::midi::MidiClass;
 use embassy_usb::{Builder as UsbBuilder, Config as UsbConfig};
-use embedded_io_async::{Read, Write};
+use embedded_io_async::Read;
 use epworth_organ::Division;
 use epworth_organ::command::{Command, CommandSource};
 use epworth_organ::debouncer::Debouncer;
 use epworth_organ::event::Event;
-use postcard::{from_bytes_cobs, to_slice_cobs};
+use epworth_organ::uart_midi::{UartWritable, live_event_to_command};
 use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::mcp23017::MCP23017;
@@ -280,16 +282,25 @@ async fn usb_midi(spawner: Spawner, usb: Peri<'static, USB>) {
 
 #[embassy_executor::task]
 async fn uart_reader(mut uart_rx: uart::BufferedUartRx) {
+    let mut midi_stream = MidiStream::new();
+    let mut commands_local: Queue<Command, 16> = Queue::new();
+
     loop {
         let mut buf: [u8; 64] = [0; 64];
-        let _ = uart_rx.read(&mut buf).await;
-        let res: Result<Command, _> = from_bytes_cobs(&mut buf);
-        match res {
-            Ok(cmd) => {
-                COMMANDS.send((cmd, CommandSource::Local)).await;
-            }
+        match uart_rx.read(&mut buf).await {
+            Ok(n) => midi_stream.feed(&buf[..n], |live_event| {
+                if let Some(cmd) = live_event_to_command(live_event) {
+                    let _ = commands_local.enqueue(cmd);
+                }
+            }),
             Err(_) => {
                 defmt::error!("Could not parse command on UART RX")
+            }
+        }
+        while !commands_local.is_empty() {
+            match commands_local.dequeue() {
+                Some(cmd) => COMMANDS.send((cmd, CommandSource::Local)).await,
+                None => {}
             }
         }
     }
@@ -299,11 +310,7 @@ async fn uart_reader(mut uart_rx: uart::BufferedUartRx) {
 async fn uart_writer(mut uart_tx: uart::BufferedUartTx) {
     loop {
         let event = UART_EVENTS.receive().await;
-        // We have to be careful here about buffer size! Preset recall serializes to 12 bytes in my testing. I'm
-        // leaving a few extra just in case i introduce anything around that size.
-        let mut buf = [0u8; 64];
-        let written = to_slice_cobs(&event, &mut buf).unwrap();
-        let _ = uart_tx.write(written).await;
+        let _ = event.write_to_uart(&mut uart_tx).await;
     }
 }
 

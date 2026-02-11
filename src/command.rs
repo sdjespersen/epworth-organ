@@ -1,5 +1,3 @@
-use serde::{Deserialize, Serialize};
-
 use crate::Division;
 
 #[derive(PartialEq)]
@@ -8,7 +6,7 @@ pub enum CommandSource {
     Local,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum Command {
     NoteOff(Division, u8),
     NoteOn(Division, u8),

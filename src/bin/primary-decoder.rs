@@ -2,6 +2,8 @@
 #![no_main]
 
 use embassy_sync::signal::Signal;
+use heapless::spsc::Queue;
+use midly::stream::MidiStream;
 use panic_probe as _;
 
 use embassy_executor::Spawner;
@@ -13,7 +15,7 @@ use embassy_sync::channel::Channel;
 use embassy_time::Timer;
 use embedded_io_async::Read;
 use epworth_organ::event::Event;
-use postcard::accumulator::{CobsAccumulator, FeedResult};
+use epworth_organ::uart_midi::live_event_to_event;
 use static_cell::StaticCell;
 
 bind_interrupts!(struct Irqs {
@@ -100,32 +102,26 @@ async fn write_stop_state(
 
 #[embassy_executor::task]
 async fn uart_reader(mut uart_rx: uart::BufferedUartRx) {
-    let mut raw_buf = [0u8; 32];
-    let mut cobs_acc: CobsAccumulator<128> = CobsAccumulator::new();
+    let mut midi_stream = MidiStream::new();
+    let mut events_local: Queue<Event, 16> = Queue::new();
 
     loop {
-        match uart_rx.read(&mut raw_buf).await {
-            Ok(n) if n > 0 => {
-                let buf = &raw_buf[..n];
-                let mut window = &buf[..];
-
-                'cobs: while !window.is_empty() {
-                    window = match cobs_acc.feed::<Event>(&window) {
-                        FeedResult::Consumed => break 'cobs,
-                        FeedResult::OverFull(new_wind) => new_wind,
-                        FeedResult::DeserError(new_wind) => new_wind,
-                        FeedResult::Success { data, remaining } => {
-                            EVENTS.send(data).await;
-                            remaining
-                        }
-                    }
+        let mut buf: [u8; 64] = [0; 64];
+        match uart_rx.read(&mut buf).await {
+            Ok(n) => midi_stream.feed(&buf[..n], |live_event| {
+                if let Some(cmd) = live_event_to_event(live_event) {
+                    let _ = events_local.enqueue(cmd);
                 }
-            },
-            Err(e) => {
-                defmt::error!("Error reading from UART: {:?}", e);
-                // Handle errors or 0-byte reads (disconnects)
-            },
-            Ok(_) => {}
+            }),
+            Err(_) => {
+                defmt::error!("Could not parse command on UART RX")
+            }
+        }
+        while !events_local.is_empty() {
+            match events_local.dequeue() {
+                Some(event) => EVENTS.send(event).await,
+                None => {}
+            }
         }
     }
 }
