@@ -102,15 +102,10 @@ async fn write_stop_state(
     data_pin: Peri<'static, AnyPin>,
     clock_pin: Peri<'static, AnyPin>,
     latch_pin: Peri<'static, AnyPin>,
-    oe_pin: Peri<'static, AnyPin>,
 ) {
     let mut stops_data_pin = Output::new(data_pin, Level::Low);
     let mut stops_clock_pin = Output::new(clock_pin, Level::Low);
     let mut stops_latch_pin = Output::new(latch_pin, Level::Low);
-    let mut stops_oe_pin = Output::new(oe_pin, Level::High);
-
-    // TODO: Possibly move this onto the main loop as something that happens after startup is complete.
-    stops_oe_pin.set_low();
 
     loop {
         let mut stop_state: u64 = STOP_STATE.wait().await;
@@ -191,6 +186,7 @@ async fn main_event_handler() {
     let mut stop_state: u64 = 0u64;
     let mut crescendo_induced_stop_state: u64 = 0u64;
 
+    // Signal the initial stop state.
     STOP_STATE.signal(stop_state);
 
     loop {
@@ -236,6 +232,9 @@ async fn main_event_handler() {
 async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
 
+    // Disable stops output until writer task is ready.
+    let mut stops_oe_pin = Output::new(p.PIN_21, Level::High);
+
     spawner.spawn(main_event_handler()).unwrap();
 
     static TX_BUF: StaticCell<[u8; 16]> = StaticCell::new();
@@ -260,9 +259,10 @@ async fn main(spawner: Spawner) {
             p.PIN_18.into(),
             p.PIN_20.into(),
             p.PIN_19.into(),
-            p.PIN_21.into(),
         ))
         .unwrap();
+    // Enable stops output now that the writer task is ready.
+    stops_oe_pin.set_low();
 
     // Heartbeat task comes last, and happens on the main loop, roughly indicating that all tasks spawned successfully.
     let mut led = Output::new(p.PIN_25, Level::Low);
