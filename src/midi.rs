@@ -1,51 +1,64 @@
+use embassy_rp::{peripherals::USB, usb::Driver};
+use embassy_usb::class::midi::Sender;
+
 /// USB MIDI interface for the Epworth organ.
-use crate::event::Event;
+use epworth_organ::event::Event;
 
-pub struct MidiPacketStream {
-    stop_state: u64,
-    counter: u8,
+pub trait UsbWritable {
+    async fn write_to_usb<'d>(self, sender: &mut Sender<'d, Driver<'d, USB>>);
 }
 
-impl Iterator for MidiPacketStream {
-    type Item = [u8; 4];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.counter < 60 {
-            // Then, all the stop tab changes
-            let div = self.counter / 15;
-            let idx = self.counter % 15 + 1;
-            let shift = div * 16 + idx;
-            let val: u8 = if self.stop_state >> shift & 1 == 1 {
-                127
-            } else {
-                0
-            };
-            self.counter += 1;
-            Some([0x0B, div | 0xB0, 117 - idx, val])
-        } else {
-            None
+impl UsbWritable for Event {
+    async fn write_to_usb<'d>(self: Event, sender: &mut Sender<'d, Driver<'d, USB>>) {
+        // Certain events require quite different handling.
+        if let Event::PresetRecalled(idx, stop_state) = self {
+            let _ = sender.write_packet(&[0x0C, 0xC5, idx, 0x00]).await;
+            for div in 0..4 {
+                let mut buf = [0u8; 60];
+                for i in 1..=15 {
+                    let shift = 16 * div + i;
+                    let midi_val = if stop_state >> shift & 1 == 1 { 127 } else { 0 };
+                    let start = 4 * (i - 1);
+                    buf[start] = 0x0B;
+                    buf[start + 1] = div as u8 | 0xB0;
+                    buf[start + 2] = 117 - i as u8;
+                    buf[start + 3] = midi_val;
+                }
+                let _ = sender.write_packet(&buf).await;
+            }
         }
-    }
-
-    // TODO: Consider implementing size_hint
-}
-
-impl MidiPacketStream {
-    pub fn for_stop_state(stop_state: u64) -> Self {
-        Self {
-            stop_state,
-            counter: 0,
+        if let Event::GeneralCancel() = self {
+            // GC NRPN: Channel 5 (not tied to a particular division), NRPN 0, value 127 to indicate pushed
+            let gc_nrpn = [
+                0x0B, 0xB4, 0x63, 0x00, 0x0B, 0xB4, 0x62, 0x01, 0x0B, 0xB4, 0x06, 0x7F,
+            ];
+            let _ = sender.write_packet(&gc_nrpn).await;
+            // Send MIDI events to turn all stops off.
+            for div in 0..4 {
+                let mut buf = [0u8; 60];
+                for i in 1..=15 {
+                    let start = 4 * (i - 1);
+                    buf[start] = 0x0B;
+                    buf[start + 1] = div as u8 | 0xB0;
+                    buf[start + 2] = 117 - i as u8;
+                    buf[start + 3] = 0x00;
+                }
+                let _ = sender.write_packet(&buf).await;
+            }
         }
-    }
-}
-
-impl Event {
-    pub fn to_usb_midi_packet(self) -> Option<[u8; 4]> {
-        match self {
-            Event::StopOn(div, idx) => Some([0x0B, div as u8 | 0xB0, 117 - idx, 0xFF]),
+        // The rest of the events map to a single 4-byte packet and have uniform handling.
+        let some_packet = match self {
+            Event::NoteOff(div, note) => Some([0x08, div as u8 | 0x80, note, 0x80]),
+            Event::NoteOn(div, note) => Some([0x08, div as u8 | 0x90, note, 0x80]),
             Event::StopOff(div, idx) => Some([0x0B, div as u8 | 0xB0, 117 - idx, 0x00]),
-            Event::PresetRecalled(idx) => Some([0x0C, 0xC4, idx, 0x00]),
-            _ => None,
+            Event::StopOn(div, idx) => Some([0x0B, div as u8 | 0xB0, 117 - idx, 0x7F]),
+            Event::Expression(div, value) => Some([0x0B, div as u8 | 0xB0, 0x0B, value]),
+            Event::Crescendo(value) => Some([0x0B, 0xB5, 0x0B, value]),
+            Event::PresetRecalled(_, _) => None, // already handled above
+            Event::GeneralCancel() => None,      // already handled above
+        };
+        if let Some(packet) = some_packet {
+            let _ = sender.write_packet(&packet).await;
         }
     }
 }

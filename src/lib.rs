@@ -1,8 +1,7 @@
-#![cfg_attr(not(test), no_std)]
+#![no_std]
 pub mod command;
 pub mod debouncer;
 pub mod event;
-pub mod midi;
 
 use defmt_rtt as _; // global logger
 
