@@ -340,8 +340,8 @@ async fn main_event_handler(preset_store: &'static mut PresetStore<'static>) {
         // while others may result in numerous or even zero outbound events. This first match applies state-related
         // logic to incoming encoder commands (e.g. "toggle" messages converted to "on" or "off" depending on state).
         let event = match command {
-            Command::KeyUp(div, value) => Some(Event::NoteOff(div, value)),
-            Command::KeyDown(div, value) => Some(Event::NoteOn(div, value)),
+            Command::NoteOff(div, value) => Some(Event::NoteOff(div, value)),
+            Command::NoteOn(div, value) => Some(Event::NoteOn(div, value)),
             Command::StopOff(div, idx) => {
                 stop_state &= !(1 << 16 * div as u8 + idx);
                 LATEST_STOP_STATE.signal(stop_state);

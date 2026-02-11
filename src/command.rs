@@ -10,8 +10,8 @@ pub enum CommandSource {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
 pub enum Command {
-    KeyUp(Division, u8),
-    KeyDown(Division, u8),
+    NoteOff(Division, u8),
+    NoteOn(Division, u8),
     StopOff(Division, u8),
     StopOn(Division, u8),
     StopToggle(Division, u8),
