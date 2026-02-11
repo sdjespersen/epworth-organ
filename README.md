@@ -1,48 +1,7 @@
 # Epworth Organ
 
-Encoder (`encoder-avr`), decoder (`decoder-avr`), etc. for the Epworth organ, targeting the Arduino Nano, written in
-Rust. Encoder and decoder compile to an ELF that can be flashed straight onto the chip.
+Encoders (`main` being the primary), decoders (`primary-decoder` being the primary), etc. for the Epworth organ,  targeting the [Raspberry Pi Pico 2](https://datasheets.raspberrypi.com/pico/pico-2-datasheet.pdf), written in Rust.
 
 ## Setup
 
-There were some tooling setup steps required to get Rust working for these particular targets. The
-[Rust on AVR book](https://book.avr-rust.org/) was helpful here. I'll update as i run into
-them again; for now i'm working from memory.
-
-You'll need compiler support for AVR (i'm on a Mac):
-
-```
-$ xcode-select --install
-$ brew tap osx-cross/avr
-$ brew install avr-gcc
-```
-
-You'll need nightly `cargo`:
-
-```
-$ rustup toolchain install nightly
-$ rustup override set nightly
-```
-
-You'll also need the utility `avrdude` to flash the built executable (`ELF`):
-
-```
-$ brew install avrdude
-```
-
-The version that lives inside Arduino's install didn't work for me.
-
-Also, don't mess with the JSON in `avr-specs`!
-
-## Build + Flash to MCU
-
-When inside the `encoder-avr` or `decoder-avr` directory, your typical `cargo build` or `cargo run` commands will work
-(optionally targeting the `--release` profile). `cargo run` will build and also flash to the MCU using `avrdude`.
-
-You may have to change the USB port depending on where it gets mapped on your
-machine, `/dev/cu.usbserial-XXXX` or whatever; this setting is found in `.cargo/config.toml`.
-
-## Gotchas
-
-When uploading, you must not have the TX/RX lines on the microcontroller hooked up! Additionally, you may not have any
-serial monitors connected to the MCU you are flashing.
+The best dev setup for this involves using a [Pico debug probe](https://www.raspberrypi.com/documentation/microcontrollers/debug-probe.html) and [probe-rs](https://probe.rs). This allows you to get a SWD debugger and UART output, as well as flashing the program to the chip without holding BOOTSEL while plugging in the USB. (Trust me, it gets old!)
