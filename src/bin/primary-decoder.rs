@@ -6,7 +6,7 @@ use panic_probe as _;
 
 use embassy_executor::Spawner;
 use embassy_rp::gpio::{AnyPin, Level, Output};
-use embassy_rp::peripherals::{UART0, UART1};
+use embassy_rp::peripherals::UART0;
 use embassy_rp::{Peri, bind_interrupts, uart};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -18,7 +18,6 @@ use static_cell::StaticCell;
 
 bind_interrupts!(struct Irqs {
     UART0_IRQ => uart::BufferedInterruptHandler<UART0>;
-    UART1_IRQ => uart::BufferedInterruptHandler<UART1>;
 });
 
 const B: [u32; 4] = [0x55555555, 0x33333333, 0x0F0F0F0F, 0x00FF00FF];
@@ -120,11 +119,11 @@ async fn uart_reader(mut uart_rx: uart::BufferedUartRx) {
                         }
                     }
                 }
-            },
+            }
             Err(e) => {
                 defmt::error!("Error reading from UART: {:?}", e);
                 // Handle errors or 0-byte reads (disconnects)
-            },
+            }
             Ok(_) => {}
         }
     }
@@ -187,9 +186,9 @@ async fn main(spawner: Spawner) {
     static RX_BUF: StaticCell<[u8; 16]> = StaticCell::new();
     let rx_buf = &mut RX_BUF.init([0; 16])[..];
     let uart_txrx = uart::BufferedUart::new(
-        p.UART1,
-        p.PIN_8,
-        p.PIN_9,
+        p.UART0,
+        p.PIN_16,
+        p.PIN_17,
         Irqs,
         tx_buf,
         rx_buf,
@@ -198,23 +197,6 @@ async fn main(spawner: Spawner) {
     let (_uart_tx, uart_rx) = uart_txrx.split();
     spawner.spawn(uart_reader(uart_rx)).unwrap();
     // spawner.spawn(uart_writer(uart_tx)).unwrap();
-
-    // // This is for the other UART
-    // static TX_BUF2: StaticCell<[u8; 16]> = StaticCell::new();
-    // let tx_buf2 = &mut TX_BUF2.init([0; 16])[..];
-    // static RX_BUF2: StaticCell<[u8; 16]> = StaticCell::new();
-    // let rx_buf2 = &mut RX_BUF2.init([0; 16])[..];
-    // let uart_txrx2 = uart::BufferedUart::new(
-    //     p.UART0,
-    //     p.PIN_0,
-    //     p.PIN_1,
-    //     Irqs,
-    //     tx_buf2,
-    //     rx_buf2,
-    //     uart::Config::default(),
-    // );
-    // let (_uart_tx2, uart_rx2) = uart_txrx2.split();
-    // spawner.spawn(uart_reader(uart_rx2)).unwrap();
 
     spawner
         .spawn(write_stop_state(
