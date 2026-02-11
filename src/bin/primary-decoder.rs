@@ -53,6 +53,7 @@ async fn write_stop_state(
     let mut stops_latch_pin = Output::new(latch_pin, Level::Low);
     let mut stops_oe_pin = Output::new(oe_pin, Level::High);
 
+    // TODO: Possibly move this onto the main loop as something that happens after startup is complete.
     stops_oe_pin.set_low();
 
     loop {
