@@ -86,7 +86,7 @@ impl UartWritable for Event {
             let mut buf = [0u8; 16];
             let mut cursor = Cursor::new(&mut buf);
             let _ = e.write(&mut cursor);
-            let _ = sender.write(cursor.written()).await;
+            let _ = sender.write_all(cursor.written()).await;
         }
     }
 }
