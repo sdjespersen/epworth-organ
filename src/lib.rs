@@ -3,9 +3,10 @@ pub mod command;
 pub mod debouncer;
 pub mod event;
 
-use defmt_rtt as _; // global logger
+use defmt_rtt as _;
+use serde::{Deserialize, Serialize}; // global logger
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
 pub enum Division {
     Swell,
     Great,

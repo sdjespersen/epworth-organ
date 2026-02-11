@@ -1,6 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 use crate::Division;
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
 pub enum Event {
     NoteOff(Division, u8),
     NoteOn(Division, u8),
