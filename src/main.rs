@@ -301,9 +301,9 @@ async fn uart_writer(mut uart_tx: uart::BufferedUartTx) {
         let event = UART_EVENTS.receive().await;
         // We have to be careful here about buffer size! Preset recall serializes to 12 bytes in my testing. I'm
         // leaving a few extra just in case i introduce anything around that size.
-        let mut buf = [0u8; 64];
+        let mut buf = [0u8; 16];
         let written = to_slice_cobs(&event, &mut buf).unwrap();
-        let _ = uart_tx.write(written).await;
+        let _ = uart_tx.write_all(written).await;
     }
 }
 
