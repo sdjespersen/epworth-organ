@@ -23,11 +23,12 @@ use embassy_time::Timer;
 use embassy_usb::class::midi as usb_midi;
 use embassy_usb::class::midi::MidiClass;
 use embassy_usb::{Builder as UsbBuilder, Config as UsbConfig};
+use embedded_io_async::{Read, Write};
 use epworth_organ::Division;
 use epworth_organ::command::{Command, CommandSource};
 use epworth_organ::debouncer::Debouncer;
 use epworth_organ::event::Event;
-use postcard::to_slice;
+use postcard::{from_bytes, to_slice};
 use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::mcp23017::MCP23017;
@@ -40,7 +41,7 @@ type I2c0Mcp = MCP23017<I2cDevice<'static, NoopRawMutex, i2c::I2c<'static, I2C0,
 
 bind_interrupts!(struct Irqs {
     USBCTRL_IRQ => rp_usb::InterruptHandler<USB>;
-    UART0_IRQ => rp_uart::InterruptHandler<UART0>;
+    UART0_IRQ => rp_uart::BufferedInterruptHandler<UART0>;
 });
 
 const MCP_I2C_ADDRESSES: [[u8; 2]; 4] = [[0x20, 0x21], [0x22, 0x23], [0x24, 0x25], [0x26, 0x27]];
@@ -278,19 +279,24 @@ async fn usb_midi(spawner: Spawner, usb: Peri<'static, USB>) {
 }
 
 #[embassy_executor::task]
-async fn uart_reader(_uart_rx: rp_uart::UartRx<'static, rp_uart::Async>) {
-    // let mut buf: [u8; 2] = [0; 2];
-    // loop {
-    // uart_rx.read_until_idle();
-    // let _ = uart_rx.read(&mut buf[..]).await;
-    // if let Some(cmd) = Command::parse(&buf[..]) {
-    //     COMMAND_BUS.send((cmd, CommandSource::Local)).await
-    // }
-    // }
+async fn uart_reader(mut uart_rx: rp_uart::BufferedUartRx) {
+    let mut buf: [u8; 16] = [0; 16];
+    loop {
+        let _ = uart_rx.read(&mut buf).await;
+        let res: Result<Command, _> = from_bytes(&buf);
+        match res {
+            Ok(cmd) => {
+                COMMAND_BUS.send((cmd, CommandSource::Local)).await;
+            }
+            Err(_) => {
+                defmt::error!("Could not parse command on UART RX")
+            }
+        }
+    }
 }
 
 #[embassy_executor::task]
-async fn uart_writer(mut uart_tx: rp_uart::UartTx<'static, rp_uart::Async>) {
+async fn uart_writer(mut uart_tx: rp_uart::BufferedUartTx) {
     loop {
         let event = UART_EVENT_BUS.receive().await;
         // We have to be careful here about buffer size! Preset recall serializes to 12 bytes in my testing. I'm
@@ -378,7 +384,8 @@ async fn main_event_handler(preset_store: &'static mut PresetStore<'static>) {
                 awaiting_save = val;
                 None
             }
-            _ => None,
+            Command::Expression(div, value) => Some(Event::Expression(div, value)),
+            Command::Crescendo(value) => Some(Event::Crescendo(value)),
         };
 
         if let Some(e) = event {
@@ -404,13 +411,17 @@ async fn main(spawner: Spawner) {
         ))
         .unwrap();
 
-    let uart_txrx = rp_uart::Uart::new(
+    static TX_BUF: StaticCell<[u8; 16]> = StaticCell::new();
+    let tx_buf = &mut TX_BUF.init([0; 16])[..];
+    static RX_BUF: StaticCell<[u8; 16]> = StaticCell::new();
+    let rx_buf = &mut RX_BUF.init([0; 16])[..];
+    let uart_txrx = rp_uart::BufferedUart::new(
         p.UART0,
         p.PIN_0,
         p.PIN_1,
         Irqs,
-        p.DMA_CH0,
-        p.DMA_CH1,
+        tx_buf,
+        rx_buf,
         rp_uart::Config::default(),
     );
     let (uart_tx, uart_rx) = uart_txrx.split();
