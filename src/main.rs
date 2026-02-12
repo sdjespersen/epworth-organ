@@ -29,7 +29,8 @@ use epworth_organ::Division;
 use epworth_organ::command::{Command, CommandSource};
 use epworth_organ::debouncer::Debouncer;
 use epworth_organ::event::Event;
-use postcard::{from_bytes_cobs, to_slice_cobs};
+use postcard::to_slice_cobs;
+use postcard::accumulator::{CobsAccumulator, FeedResult};
 use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::mcp23017::MCP23017;
@@ -306,17 +307,32 @@ async fn usb_midi(spawner: Spawner, usb: Peri<'static, USB>) {
 
 #[embassy_executor::task]
 async fn uart_reader(mut uart_rx: uart::BufferedUartRx) {
+    // TODO: This is copy-pasted from the decoder. Factor it out?
+    let mut raw_buf = [0u8; 32];
+    let mut cobs_acc: CobsAccumulator<128> = CobsAccumulator::new();
+
     loop {
-        let mut buf: [u8; 64] = [0; 64];
-        let _ = uart_rx.read(&mut buf).await;
-        let res: Result<Command, _> = from_bytes_cobs(&mut buf);
-        match res {
-            Ok(cmd) => {
-                COMMANDS.send((cmd, CommandSource::Local)).await;
+        match uart_rx.read(&mut raw_buf).await {
+            Ok(n) if n > 0 => {
+                let buf = &raw_buf[..n];
+                let mut window = &buf[..];
+
+                'cobs: while !window.is_empty() {
+                    window = match cobs_acc.feed::<Command>(&window) {
+                        FeedResult::Consumed => break 'cobs,
+                        FeedResult::OverFull(new_wind) => new_wind,
+                        FeedResult::DeserError(new_wind) => new_wind,
+                        FeedResult::Success { data, remaining } => {
+                            COMMANDS.send((data, CommandSource::Local)).await;
+                            remaining
+                        }
+                    }
+                }
             }
-            Err(_) => {
-                defmt::error!("Could not parse command on UART RX")
+            Err(e) => {
+                defmt::error!("Error reading from UART: {:?}", e);
             }
+            Ok(_) => {}
         }
     }
 }
