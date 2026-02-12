@@ -3,10 +3,10 @@
 
 mod mcp23017;
 mod presets;
-mod usb;
+mod usb_midi;
 
-use embassy_sync::signal::Signal;
 use panic_probe as _;
+use usbd_midi::{Message, UsbMidiPacketReader};
 
 use core::cell::RefCell;
 
@@ -20,8 +20,9 @@ use embassy_rp::{Peri, bind_interrupts, i2c, uart, usb as rp_usb};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use embassy_sync::channel::Channel;
+use embassy_sync::signal::Signal;
 use embassy_time::Timer;
-use embassy_usb::class::midi as usb_midi;
+use embassy_usb::class::midi as eusb_midi;
 use embassy_usb::class::midi::MidiClass;
 use embassy_usb::{Builder as UsbBuilder, Config as UsbConfig};
 use embedded_io_async::{Read, Write};
@@ -29,14 +30,14 @@ use epworth_organ::Division;
 use epworth_organ::command::{Command, CommandSource};
 use epworth_organ::debouncer::Debouncer;
 use epworth_organ::event::Event;
-use postcard::to_slice_cobs;
 use postcard::accumulator::{CobsAccumulator, FeedResult};
+use postcard::to_slice_cobs;
 use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::mcp23017::MCP23017;
 use crate::mcp23017::Port;
 use crate::presets::PresetStore;
-use crate::usb::UsbWritable;
+use crate::usb_midi::{midi_message_to_command, write_event_to_usb};
 
 type I2c0Bus = Mutex<NoopRawMutex, RefCell<i2c::I2c<'static, I2C0, i2c::Blocking>>>;
 type I2c0Mcp = MCP23017<I2cDevice<'static, NoopRawMutex, i2c::I2c<'static, I2C0, i2c::Blocking>>>;
@@ -233,41 +234,48 @@ async fn read_crescendo_position(
 }
 
 #[embassy_executor::task]
-async fn usb_midi_writer(mut usb_midi_tx: usb_midi::Sender<'static, rp_usb::Driver<'static, USB>>) {
+async fn usb_midi_writer(
+    mut usb_midi_tx: eusb_midi::Sender<'static, rp_usb::Driver<'static, USB>>,
+) {
     // TODO: Handle the case where the USB cable gets connected/disconnected while the program is running.
     // We can probably implement this by breaking out of the inner loop if we time out when writing packets.
     usb_midi_tx.wait_connection().await;
 
     loop {
         let event = USB_EVENTS.receive().await;
-        event.write_to_usb(&mut usb_midi_tx).await;
+        write_event_to_usb(event, &mut usb_midi_tx).await;
     }
 }
 
-// TODO: I can't for the life of me get this working! The device just doesn't show up as writeable.
 #[embassy_executor::task]
 async fn usb_midi_reader(
-    mut usb_midi_rx: usb_midi::Receiver<'static, rp_usb::Driver<'static, USB>>,
+    mut usb_midi_rx: eusb_midi::Receiver<'static, rp_usb::Driver<'static, USB>>,
 ) {
     // TODO: Handle the case where the USB cable gets connected/disconnected while the program is running.
     usb_midi_rx.wait_connection().await;
 
-    // let mut data = [0u8; 64];
+    let mut data = [0u8; 64];
 
-    // loop {
-    //     match usb_midi_rx.read_packet(&mut data).await {
-    //         Ok(n) => {
-    //             defmt::debug!("Got {:?} bytes", n);
-    //             // Could there be multiple?
-    //             let cmd = parse_command(&data[..n]);
-    //             COMMANDS.send((cmd, CommandSource::External)).await;
-    //         }
-    //         Err(_) => {
-    //             defmt::error!("Error reading USB MIDI");
-    //             break;
-    //         }
-    //     }
-    // }
+    loop {
+        match usb_midi_rx.read_packet(&mut data).await {
+            Ok(n) if n > 0 => {
+                let packet_reader = UsbMidiPacketReader::new(&data, n);
+                for packet in packet_reader.into_iter() {
+                    if let Ok(packet) = packet {
+                        if let Ok(message) = Message::try_from(&packet) {
+                            if let Some(cmd) = midi_message_to_command(message) {
+                                COMMANDS.send((cmd, CommandSource::External)).await;
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                defmt::error!("Error reading from USB: {:?}", e);
+            }
+            Ok(_) => {}
+        }
+    }
 }
 
 #[embassy_executor::task]
