@@ -4,6 +4,22 @@ use embassy_usb::class::midi::Sender;
 /// USB MIDI interface for the Epworth organ.
 use epworth_organ::event::Event;
 
+fn div_cc_bufs(stop_state: u64) -> [[u8; 60]; 4] {
+    let mut bufs = [[0u8; 60]; 4];
+    for div in 0..4 {
+        for i in 0..15 {
+            let shift = 16 * div + i;
+            let midi_val = if stop_state >> shift & 1 == 1 { 127 } else { 0 };
+            let start = 4 * i;
+            bufs[div][start] = 0x0B;
+            bufs[div][start + 1] = div as u8 | 0xB0;
+            bufs[div][start + 2] = 102 + i as u8;
+            bufs[div][start + 3] = midi_val;
+        }
+    }
+    bufs
+}
+
 pub trait UsbWritable {
     async fn write_to_usb<'d>(self, sender: &mut Sender<'d, Driver<'d, USB>>);
 }
@@ -13,17 +29,7 @@ impl UsbWritable for Event {
         // Certain events require quite different handling.
         if let Event::PresetRecalled(idx, stop_state) = self {
             let _ = sender.write_packet(&[0x0C, 0xC5, idx, 0x00]).await;
-            for div in 0..4 {
-                let mut buf = [0u8; 60];
-                for i in 1..=15 {
-                    let shift = 16 * div + i;
-                    let midi_val = if stop_state >> shift & 1 == 1 { 127 } else { 0 };
-                    let start = 4 * (i - 1);
-                    buf[start] = 0x0B;
-                    buf[start + 1] = div as u8 | 0xB0;
-                    buf[start + 2] = 117 - i as u8;
-                    buf[start + 3] = midi_val;
-                }
+            for buf in div_cc_bufs(stop_state) {
                 let _ = sender.write_packet(&buf).await;
             }
         }
@@ -34,15 +40,7 @@ impl UsbWritable for Event {
             ];
             let _ = sender.write_packet(&gc_nrpn).await;
             // Send MIDI events to turn all stops off.
-            for div in 0..4 {
-                let mut buf = [0u8; 60];
-                for i in 1..=15 {
-                    let start = 4 * (i - 1);
-                    buf[start] = 0x0B;
-                    buf[start + 1] = div as u8 | 0xB0;
-                    buf[start + 2] = 117 - i as u8;
-                    buf[start + 3] = 0x00;
-                }
+            for buf in div_cc_bufs(0) {
                 let _ = sender.write_packet(&buf).await;
             }
         }
@@ -50,8 +48,8 @@ impl UsbWritable for Event {
         let some_packet = match self {
             Event::NoteOff(div, note) => Some([0x08, div as u8 | 0x80, note, 0x80]),
             Event::NoteOn(div, note) => Some([0x08, div as u8 | 0x90, note, 0x80]),
-            Event::StopOff(div, idx) => Some([0x0B, div as u8 | 0xB0, 117 - idx, 0x00]),
-            Event::StopOn(div, idx) => Some([0x0B, div as u8 | 0xB0, 117 - idx, 0x7F]),
+            Event::StopOff(div, idx) => Some([0x0B, div as u8 | 0xB0, 102 + idx, 0x00]),
+            Event::StopOn(div, idx) => Some([0x0B, div as u8 | 0xB0, 102 + idx, 0x7F]),
             Event::Expression(div, value) => Some([0x0B, div as u8 | 0xB0, 0x0B, value]),
             Event::Crescendo(value) => Some([0x0B, 0xB5, 0x0B, value]),
             Event::PresetRecalled(_, _) => None, // already handled above
