@@ -1,3 +1,25 @@
+struct BitsWhere {
+    n: u16,
+}
+
+impl Iterator for BitsWhere {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.n == 0 {
+            return None;
+        }
+
+        // Find the index of the lowest set bit (0-15)
+        let index = self.n.trailing_zeros();
+
+        // Clear the lowest set bit (Kernighan's bit counting trick)
+        self.n &= self.n - 1;
+
+        Some(index as u8)
+    }
+}
+
 pub struct Debouncer<const DEPTH: usize> {
     history: [u16; DEPTH],
     index: usize,
@@ -32,28 +54,15 @@ impl<const DEPTH: usize> Debouncer<DEPTH> {
         self.stable_state &= stable_low;
     }
 
-    pub fn for_each_falling_edge<F>(&self, f: F)
-    where
-        F: FnMut(u8),
-    {
-        self.for_each_bit(self.prev_stable_state & !self.stable_state, f);
+    pub fn falling_edges(&self) -> impl Iterator<Item = u8> {
+        BitsWhere {
+            n: self.prev_stable_state & !self.stable_state,
+        }
     }
 
-    pub fn for_each_rising_edge<F>(&self, f: F)
-    where
-        F: FnMut(u8),
-    {
-        self.for_each_bit(!self.prev_stable_state & self.stable_state, f);
-    }
-
-    fn for_each_bit<F>(&self, mut mask: u16, mut f: F)
-    where
-        F: FnMut(u8),
-    {
-        while mask != 0 {
-            let i = mask.trailing_zeros() as u8;
-            f(i);
-            mask &= mask - 1;
+    pub fn rising_edges(&self) -> impl Iterator<Item = u8> {
+        BitsWhere {
+            n: !self.prev_stable_state & self.stable_state,
         }
     }
 }

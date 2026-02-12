@@ -1,39 +1,31 @@
 // Note: This is heavily modified from https://github.com/circuitry-maker/mcp23017.
 // I needed a different API than was offered, and there were some conflicts with the latest embedded-hal crate (1.0.0).
 
-//! Manages an MCP23017, a 16-Bit I2C I/O Expander with Serial Interface module.
-//!
-//! This operates the chip in `IOCON.BANK=0` mode, i.e. the registers are mapped sequentially.
-//! This driver does not set `IOCON.BANK`, but the factory default is `0` and this driver does
-//! not change that value.
-//!
-//! See [the datasheet](http://ww1.microchip.com/downloads/en/DeviceDoc/20001952C.pdf) for more
-//! information on the device.
+// Manages an MCP23017, a 16-Bit I2C I/O Expander with Serial Interface module.
+//
+// This operates the chip in `IOCON.BANK=0` mode, i.e. the registers are mapped sequentially.
+// This driver does not set `IOCON.BANK`, but the factory default is `0` and this driver does
+// not change that value.
+//
+// See [the datasheet](http://ww1.microchip.com/downloads/en/DeviceDoc/20001952C.pdf) for more
+// information on the device.
 
 use embedded_hal::i2c::I2c;
 
-/// Struct for an MCP23017.
-/// See the crate-level documentation for general info on the device and the operation of this
-/// driver.
-#[derive(Clone, Copy, Debug)]
 pub struct MCP23017<I2C: I2c> {
     com: I2C,
-    /// The I2C slave address of this device.
     pub address: u8,
 }
 
 impl<I2C: I2c> MCP23017<I2C> {
-    /// Creates an expander with specific address.
     pub fn new(i2c: I2C, address: u8) -> Self {
         Self { com: i2c, address }
     }
 
-    /// Initiates hardware with basic setup.
     pub fn init_hardware(&mut self) -> Result<(), I2C::Error> {
         // set all inputs to defaults on port A and B
         self.write_register(Register::IODIRA, 0xff)?;
         self.write_register(Register::IODIRB, 0xff)?;
-
         Ok(())
     }
 
@@ -85,12 +77,9 @@ impl<I2C: I2c> MCP23017<I2C> {
     }
 }
 
-/// Generic port definitions.
 #[derive(Debug, Copy, Clone)]
 pub enum Port {
-    /// Represent port A.
     GPIOA,
-    /// Represent port B.
     GPIOB,
 }
 
