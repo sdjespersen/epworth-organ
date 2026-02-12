@@ -52,7 +52,7 @@ pub async fn write_event_to_usb<'d>(event: Event, sender: &mut Sender<'d, Driver
         Event::StopOff(div, idx) => Some([0x0B, div as u8 | 0xB0, 102 + idx, 0x00]),
         Event::StopOn(div, idx) => Some([0x0B, div as u8 | 0xB0, 102 + idx, 0x7F]),
         Event::Expression(div, value) => Some([0x0B, div as u8 | 0xB0, 0x0B, value]),
-        Event::Crescendo(value) => Some([0x0B, 0xB5, 0x0B, value]),
+        Event::Crescendo(value) => Some([0x0B, 0xB4, 0x0B, value]),
         Event::PresetRecalled(_, _) => None, // already handled above
         Event::GeneralCancel() => None,      // already handled above
     };
