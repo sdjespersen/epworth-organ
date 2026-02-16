@@ -1,7 +1,10 @@
 #![no_std]
 pub mod command;
 pub mod debouncer;
+pub mod decoder_state;
+pub mod encoder_state;
 pub mod event;
+pub mod presets;
 
 use defmt_rtt as _;
 use serde::{Deserialize, Serialize}; // global logger

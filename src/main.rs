@@ -2,9 +2,10 @@
 #![no_main]
 
 mod mcp23017;
-mod presets;
 mod usb_midi;
 
+use epworth_organ::encoder_state::EncoderState;
+use epworth_organ::presets::PresetStore;
 use panic_probe as _;
 use usbd_midi::{Message, UsbMidiPacketReader};
 
@@ -36,7 +37,6 @@ use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::mcp23017::MCP23017;
 use crate::mcp23017::Port;
-use crate::presets::PresetStore;
 use crate::usb_midi::{midi_message_to_command, write_event_to_usb};
 
 type I2c0Bus = Mutex<NoopRawMutex, RefCell<i2c::I2c<'static, I2C0, i2c::Blocking>>>;
@@ -376,69 +376,23 @@ fn setup_mcps(i2c_bus: &'static I2c0Bus) {
 
 #[embassy_executor::task]
 async fn main_event_handler(preset_store: &'static mut PresetStore<'static>) {
-    let mut stop_state: u64 = 0u64;
-    let mut awaiting_save = false;
+    // let mut stop_state: u64 = 0u64;
+    // let mut awaiting_save = false;
+    let mut enc_state = EncoderState::new(preset_store);
 
     // Flush initial stop state.
-    STOP_STATE.signal(stop_state);
+    STOP_STATE.signal(enc_state.get_stop_state());
 
     loop {
         let (command, src) = COMMANDS.receive().await;
 
-        // This is the guts of the primary encoder MCU. All commands issued to the organ go through this event loop in
-        // order to affect any state on the organ. Some commands pass through essentially untouched to the decoder,
-        // while others may result in numerous or even zero outbound events. This first match applies state-related
-        // logic to incoming encoder commands (e.g. "toggle" messages converted to "on" or "off" depending on state).
-        let event = match command {
-            Command::NoteOff(div, value) => Some(Event::NoteOff(div, value)),
-            Command::NoteOn(div, value) => Some(Event::NoteOn(div, value)),
-            Command::StopOff(div, idx) => {
-                stop_state &= !(1 << 16 * div as u8 + idx);
-                STOP_STATE.signal(stop_state);
-                Some(Event::StopOff(div, idx))
-            }
-            Command::StopOn(div, idx) => {
-                stop_state |= 1 << 16 * div as u8 + idx;
-                STOP_STATE.signal(stop_state);
-                Some(Event::StopOn(div, idx))
-            }
-            Command::StopToggle(div, idx) => {
-                let shift = 16 * div as u8 + idx;
-                stop_state ^= 1 << shift;
-                STOP_STATE.signal(stop_state);
-                if stop_state >> shift & 1 == 1 {
-                    Some(Event::StopOn(div, idx))
-                } else {
-                    Some(Event::StopOff(div, idx))
-                }
-            }
-            Command::GeneralCancel() => {
-                stop_state = 0;
-                STOP_STATE.signal(stop_state);
-                Some(Event::GeneralCancel())
-            }
-            Command::RecallPreset(idx) => {
-                if awaiting_save {
-                    // Saving a preset is internal; it emits no events.
-                    preset_store.save(idx, &stop_state).await;
-                    // Safety: Disengage save mode if we've already written one preset.
-                    awaiting_save = false;
-                    None
-                } else {
-                    stop_state = preset_store.load(idx).await;
-                    STOP_STATE.signal(stop_state);
-                    Some(Event::PresetRecalled(idx, stop_state))
-                }
-            }
-            Command::EnableSave(val) => {
-                awaiting_save = val;
-                None
-            }
-            Command::Expression(div, value) => Some(Event::Expression(div, value)),
-            Command::Crescendo(value) => Some(Event::Crescendo(value)),
-        };
+        let command_result = enc_state.command(command).await;
 
-        if let Some(e) = event {
+        if command_result.1 {
+            STOP_STATE.signal(enc_state.get_stop_state())
+        }
+
+        if let Some(e) = command_result.0 {
             if src == CommandSource::Local {
                 let _ = USB_EVENTS.try_send(e);
             }
