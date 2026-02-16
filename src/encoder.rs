@@ -1,16 +1,20 @@
-use crate::presets::PresetStore;
 use crate::{command::Command, event::Event};
 
-pub struct EncoderState<'d> {
+pub trait PresetStore {
+    async fn save(&mut self, key: u8, value: &u64);
+    async fn load(&mut self, key: u8) -> u64;
+}
+
+pub struct Encoder<'d, T: PresetStore> {
     stop_state: u64,
     awaiting_save: bool,
-    preset_store: &'d mut PresetStore<'d>,
+    preset_store: &'d mut T,
 }
 
 pub struct CommandResult(pub Option<Event>, pub bool);
 
-impl<'d> EncoderState<'d> {
-    pub fn new(preset_store: &'d mut PresetStore<'d>) -> Self {
+impl<'d, T: PresetStore> Encoder<'d, T> {
+    pub fn new(preset_store: &'d mut T) -> Self {
         Self {
             stop_state: 0u64,
             awaiting_save: false,
@@ -22,7 +26,7 @@ impl<'d> EncoderState<'d> {
         self.stop_state
     }
 
-    pub async fn command(&mut self, cmd: Command) -> CommandResult {
+    pub async fn handle(&mut self, cmd: Command) -> CommandResult {
         // This is the guts of the primary encoder MCU. All commands issued to the organ go through this event loop in
         // order to affect any state on the organ. Some commands pass through essentially untouched to the decoder,
         // while others may result in numerous or even zero outbound events. This first match applies state-related

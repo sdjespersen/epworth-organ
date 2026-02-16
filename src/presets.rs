@@ -1,6 +1,7 @@
 use core::ops::Range;
 use embassy_rp::flash::{Async, ERASE_SIZE, Flash, PAGE_SIZE};
 use embassy_rp::peripherals::FLASH;
+use epworth_organ::encoder::PresetStore;
 use sequential_storage::cache::NoCache;
 use sequential_storage::map::{MapConfig, MapStorage};
 
@@ -12,12 +13,11 @@ const FLASH_OFFSET: u32 = (FLASH_SIZE - (9 * ERASE_SIZE)) as u32;
 const END_PRESET_FLASH: u32 = (FLASH_SIZE - ERASE_SIZE) as u32;
 const PRESET_FLASH_RANGE: Range<u32> = FLASH_OFFSET..END_PRESET_FLASH;
 
-pub struct PresetStore<'d> {
+pub struct Presets<'d> {
     storage: MapStorage<u8, Flash<'d, FLASH, Async, FLASH_SIZE>, NoCache>,
 }
 
-// TODO: Caching?
-impl<'d> PresetStore<'d> {
+impl<'d> Presets<'d> {
     pub fn new(flash: Flash<'d, FLASH, Async, FLASH_SIZE>) -> Self {
         Self {
             storage: MapStorage::<u8, Flash<'d, FLASH, Async, FLASH_SIZE>, NoCache>::new(
@@ -27,8 +27,11 @@ impl<'d> PresetStore<'d> {
             ),
         }
     }
+}
 
-    pub async fn save(&mut self, key: u8, value: &u64) {
+// TODO: Caching?
+impl<'d> PresetStore for Presets<'d> {
+    async fn save(&mut self, key: u8, value: &u64) {
         let mut data_buffer = [0u8; PAGE_SIZE];
         self.storage
             .store_item(&mut data_buffer, &key, value)
@@ -36,7 +39,7 @@ impl<'d> PresetStore<'d> {
             .unwrap();
     }
 
-    pub async fn load(&mut self, key: u8) -> u64 {
+    async fn load(&mut self, key: u8) -> u64 {
         let mut data_buffer = [0u8; PAGE_SIZE];
         let value = self
             .storage
