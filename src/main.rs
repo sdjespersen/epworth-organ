@@ -383,7 +383,7 @@ async fn main_event_handler(preset_store: &'static mut Presets<'static>) {
         }
 
         if let Some(e) = command_result.0 {
-            if src == CommandSource::Local {
+            if let CommandSource::Local = src {
                 let _ = USB_EVENTS.try_send(e);
             }
             UART_EVENTS.send(e).await;

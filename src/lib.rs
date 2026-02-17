@@ -9,7 +9,7 @@ pub mod stops;
 use defmt_rtt as _;
 use serde::{Deserialize, Serialize}; // global logger
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub enum Division {
     Swell,
     Great,

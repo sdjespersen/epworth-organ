@@ -6,7 +6,7 @@ pub enum StopKind {
     Coupler,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct Stop {
     offset: u8,
 }
