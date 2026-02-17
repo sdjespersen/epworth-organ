@@ -26,11 +26,12 @@ impl<'d, T: PresetStore> Encoder<'d, T> {
         self.stops
     }
 
+    // This is the guts of the primary encoder MCU. All commands issued to the organ go through this handler in order
+    // to affect any state on the organ. Some commands pass through essentially untouched to the decoder, while others
+    // may be "absorbed" by the encoder and result in zero outbound events (e.g. "save preset"). This handler applies
+    // state-related logic to incoming encoder commands (e.g. "toggle" messages converted to "on" or "off" depending on
+    // state), but it does not concern itself with couplings; those will be handled by the decoder.
     pub async fn handle(&mut self, cmd: Command) -> CommandResult {
-        // This is the guts of the primary encoder MCU. All commands issued to the organ go through this event loop in
-        // order to affect any state on the organ. Some commands pass through essentially untouched to the decoder,
-        // while others may result in numerous or even zero outbound events. This first match applies state-related
-        // logic to incoming encoder commands (e.g. "toggle" messages converted to "on" or "off" depending on state).
         match cmd {
             Command::NoteOff(div, value) => CommandResult(Some(Event::NoteOff(div, value)), false),
             Command::NoteOn(div, value) => CommandResult(Some(Event::NoteOn(div, value)), false),
@@ -59,7 +60,7 @@ impl<'d, T: PresetStore> Encoder<'d, T> {
                 if self.awaiting_save {
                     // Saving a preset is internal; it emits no events.
                     self.preset_store.save(idx, &self.stops).await;
-                    // Safety: Disengage save mode if we've already written one preset.
+                    // Safety: Disengage save mode if we've already written a preset.
                     self.awaiting_save = false;
                     CommandResult(None, false)
                 } else {
