@@ -1,3 +1,4 @@
+use crate::stops::Stop;
 use serde::{Deserialize, Serialize};
 
 use crate::Division;
@@ -12,9 +13,9 @@ pub enum CommandSource {
 pub enum Command {
     NoteOff(Division, u8),
     NoteOn(Division, u8),
-    StopOff(Division, u8),
-    StopOn(Division, u8),
-    StopToggle(Division, u8),
+    StopOff(Stop),
+    StopOn(Stop),
+    StopToggle(Stop),
     RecallPreset(u8),
     GeneralCancel(),
     EnableSave(bool),

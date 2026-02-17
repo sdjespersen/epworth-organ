@@ -1,13 +1,14 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Division;
+use crate::stops::Stop;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
 pub enum Event {
     NoteOff(Division, u8),
     NoteOn(Division, u8),
-    StopOff(Division, u8),
-    StopOn(Division, u8),
+    StopOff(Stop),
+    StopOn(Stop),
     PresetRecalled(u8, u64),
     GeneralCancel(),
     Expression(Division, u8),

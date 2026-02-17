@@ -3,10 +3,15 @@ name = "epworth-organ"
 version = "0.1.0"
 edition = "2024"
 
+# Only deps for pure logic in the lib go here.
 [dependencies]
-cortex-m-rt = "0.7.5"
 defmt = "1.0.1"
 defmt-rtt = "1.1.0"
+serde = { version = "1.0.228", features = ["derive"], default-features = false }
+
+# Deps needed to actually run the program go here.
+[target.'cfg(all(target_arch = "arm", target_os = "none"))'.dependencies]
+cortex-m-rt = "0.7.5"
 embassy-embedded-hal = "0.5.0"
 embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-thread"] }
 embassy-rp = { version = "0.9.0", features = ["critical-section-impl", "rp235xa", "time-driver", "defmt", "intrinsics"] }
@@ -20,6 +25,5 @@ embedded-io-async = "0.6.1"
 panic-probe = "1.0.0"
 postcard = "1.1.3"
 sequential-storage = { version = "7.1.0", default-features = false }
-serde = { version = "1.0.228", features = ["derive"], default-features = false }
 static_cell = "2.1.1"
 usbd-midi = "0.5.1"

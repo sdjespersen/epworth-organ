@@ -1,9 +1,10 @@
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 pub mod command;
 pub mod debouncer;
-pub mod decoder_state;
+pub mod decoder;
 pub mod encoder;
 pub mod event;
+pub mod stops;
 
 use defmt_rtt as _;
 use serde::{Deserialize, Serialize}; // global logger

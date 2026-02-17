@@ -2,7 +2,6 @@
 #![no_main]
 
 use embassy_sync::signal::Signal;
-use epworth_organ::decoder_state::DecoderState;
 use panic_probe as _;
 
 use embassy_executor::Spawner;
@@ -13,6 +12,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::Timer;
 use embedded_io_async::Read;
+use epworth_organ::decoder::Decoder;
 use epworth_organ::event::Event;
 use postcard::accumulator::{CobsAccumulator, FeedResult};
 use static_cell::StaticCell;
@@ -128,14 +128,14 @@ async fn uart_reader(mut uart_rx: uart::BufferedUartRx) {
 
 #[embassy_executor::task]
 async fn main_event_handler() {
-    let mut decoder_state = DecoderState::new();
+    let mut decoder = Decoder::new();
 
     // Signal the initial stop state.
-    STOP_STATE.signal(decoder_state.effective_stop_state());
+    STOP_STATE.signal(decoder.stop_state());
 
     loop {
         let event = EVENTS.receive().await;
-        let result = decoder_state.handle(event);
+        let result = decoder.handle(event);
         if let Some(stop_state) = result.stop_state {
             STOP_STATE.signal(stop_state);
         }

@@ -31,6 +31,7 @@ use epworth_organ::command::{Command, CommandSource};
 use epworth_organ::debouncer::Debouncer;
 use epworth_organ::encoder::Encoder;
 use epworth_organ::event::Event;
+use epworth_organ::stops::Stop;
 use postcard::accumulator::{CobsAccumulator, FeedResult};
 use postcard::to_slice_cobs;
 use static_cell::{ConstStaticCell, StaticCell};
@@ -139,7 +140,10 @@ async fn scan_stop_tab_buttons(i2c_bus: &'static I2c0Bus) {
             for i in stop_tab_button_debouncers[div as usize].falling_edges() {
                 // Because the raw readings (and hence debouncers) are MSB first, need to invert the stop number.
                 COMMANDS
-                    .send((Command::StopToggle(div, 15 - i), CommandSource::Local))
+                    .send((
+                        Command::StopToggle(Stop::new(div, 15 - i)),
+                        CommandSource::Local,
+                    ))
                     .await;
             }
         }

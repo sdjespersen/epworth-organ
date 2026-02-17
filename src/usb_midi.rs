@@ -9,6 +9,7 @@ use embassy_usb::class::midi::Sender;
 /// USB MIDI interface for the Epworth organ.
 use epworth_organ::command::Command;
 use epworth_organ::event::Event;
+use epworth_organ::stops::Stop;
 
 fn div_cc_bufs(stop_state: u64) -> [[u8; 60]; 4] {
     let mut bufs = [[0u8; 60]; 4];
@@ -49,8 +50,8 @@ pub async fn write_event_to_usb<'d>(event: Event, sender: &mut Sender<'d, Driver
     let some_packet = match event {
         Event::NoteOff(div, note) => Some([0x08, div as u8 | 0x80, note, 0x80]),
         Event::NoteOn(div, note) => Some([0x08, div as u8 | 0x90, note, 0x80]),
-        Event::StopOff(div, idx) => Some([0x0B, div as u8 | 0xB0, 102 + idx, 0x00]),
-        Event::StopOn(div, idx) => Some([0x0B, div as u8 | 0xB0, 102 + idx, 0x7F]),
+        Event::StopOff(stop) => Some([0x0B, stop.div as u8 | 0xB0, 102 + stop.idx, 0x00]),
+        Event::StopOn(stop) => Some([0x0B, stop.div as u8 | 0xB0, 102 + stop.idx, 0x7F]),
         Event::Expression(div, value) => Some([0x0B, div as u8 | 0xB0, 0x0B, value]),
         Event::Crescendo(value) => Some([0x0B, 0xB4, 0x0B, value]),
         Event::PresetRecalled(_, _) => None, // already handled above
@@ -96,9 +97,9 @@ pub fn midi_message_to_command(message: Message) -> Option<Command> {
                 && let Some(div) = some_div
             {
                 if u8::from(value) < 64 {
-                    Some(Command::StopOff(div, controller - 102))
+                    Some(Command::StopOff(Stop::new(div, controller - 102)))
                 } else {
-                    Some(Command::StopOn(div, controller - 102))
+                    Some(Command::StopOn(Stop::new(div, controller - 102)))
                 }
             } else if controller == 11 {
                 if channel == Channel::Channel5 {

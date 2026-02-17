@@ -6,7 +6,7 @@ pub trait PresetStore {
 }
 
 pub struct Encoder<'d, T: PresetStore> {
-    stop_state: u64,
+    stops: u64,
     awaiting_save: bool,
     preset_store: &'d mut T,
 }
@@ -16,14 +16,14 @@ pub struct CommandResult(pub Option<Event>, pub bool);
 impl<'d, T: PresetStore> Encoder<'d, T> {
     pub fn new(preset_store: &'d mut T) -> Self {
         Self {
-            stop_state: 0u64,
+            stops: 0u64,
             awaiting_save: false,
             preset_store: preset_store,
         }
     }
 
     pub fn get_stop_state(&self) -> u64 {
-        self.stop_state
+        self.stops
     }
 
     pub async fn handle(&mut self, cmd: Command) -> CommandResult {
@@ -34,37 +34,37 @@ impl<'d, T: PresetStore> Encoder<'d, T> {
         match cmd {
             Command::NoteOff(div, value) => CommandResult(Some(Event::NoteOff(div, value)), false),
             Command::NoteOn(div, value) => CommandResult(Some(Event::NoteOn(div, value)), false),
-            Command::StopOff(div, idx) => {
-                self.stop_state &= !(1 << 16 * div as u8 + idx);
-                CommandResult(Some(Event::StopOff(div, idx)), true)
+            Command::StopOff(stop) => {
+                self.stops &= !(1 << stop.offset());
+                CommandResult(Some(Event::StopOff(stop)), true)
             }
-            Command::StopOn(div, idx) => {
-                self.stop_state |= 1 << 16 * div as u8 + idx;
-                CommandResult(Some(Event::StopOn(div, idx)), true)
+            Command::StopOn(stop) => {
+                self.stops |= 1 << stop.offset();
+                CommandResult(Some(Event::StopOn(stop)), true)
             }
-            Command::StopToggle(div, idx) => {
-                let shift = 16 * div as u8 + idx;
-                self.stop_state ^= 1 << shift;
-                if self.stop_state >> shift & 1 == 1 {
-                    CommandResult(Some(Event::StopOn(div, idx)), true)
+            Command::StopToggle(stop) => {
+                let mask = 1 << stop.offset();
+                self.stops ^= mask;
+                if self.stops & mask != 0 {
+                    CommandResult(Some(Event::StopOn(stop)), true)
                 } else {
-                    CommandResult(Some(Event::StopOff(div, idx)), true)
+                    CommandResult(Some(Event::StopOff(stop)), true)
                 }
             }
             Command::GeneralCancel() => {
-                self.stop_state = 0;
+                self.stops = 0;
                 CommandResult(Some(Event::GeneralCancel()), true)
             }
             Command::RecallPreset(idx) => {
                 if self.awaiting_save {
                     // Saving a preset is internal; it emits no events.
-                    self.preset_store.save(idx, &self.stop_state).await;
+                    self.preset_store.save(idx, &self.stops).await;
                     // Safety: Disengage save mode if we've already written one preset.
                     self.awaiting_save = false;
                     CommandResult(None, false)
                 } else {
-                    self.stop_state = self.preset_store.load(idx).await;
-                    CommandResult(Some(Event::PresetRecalled(idx, self.stop_state)), true)
+                    self.stops = self.preset_store.load(idx).await;
+                    CommandResult(Some(Event::PresetRecalled(idx, self.stops)), true)
                 }
             }
             Command::EnableSave(val) => {
