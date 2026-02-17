@@ -1,56 +1,6 @@
 use crate::Division;
 use serde::{Deserialize, Serialize};
 
-pub enum StopKind {
-    SpeakingStop,
-    Coupler,
-}
-
-#[derive(Clone, Copy, Serialize, Deserialize)]
-pub struct Stop {
-    offset: u8,
-}
-
-impl Stop {
-    pub const fn new(div: Division, idx: u8) -> Self {
-        Self {
-            offset: 16 * div.to_u8() + idx,
-        }
-    }
-
-    pub const fn kind(&self) -> StopKind {
-        if (11 <= self.offset && self.offset <= 13)
-            || (24 <= self.offset && self.offset <= 30)
-            || (41 <= self.offset && self.offset <= 46)
-            || (58 <= self.offset && self.offset <= 61)
-        {
-            StopKind::Coupler
-        } else {
-            StopKind::SpeakingStop
-        }
-    }
-
-    pub const fn div(&self) -> Division {
-        if self.offset < 16 {
-            Division::Swell
-        } else if self.offset < 32 {
-            Division::Great
-        } else if self.offset < 48 {
-            Division::Choir
-        } else {
-            Division::Pedal
-        }
-    }
-
-    pub const fn idx(&self) -> u8 {
-        self.offset % 16
-    }
-
-    pub const fn offset(&self) -> u8 {
-        self.offset
-    }
-}
-
 // Swell speaking stops
 pub const SWELL_GEDECKT_FLUTE_8: Stop = Stop::new(Division::Swell, 0);
 pub const SWELL_SALICIONAL_8: Stop = Stop::new(Division::Swell, 1);
@@ -117,3 +67,65 @@ pub const SWELL_TO_PEDAL_8: Stop = Stop::new(Division::Pedal, 10);
 pub const SWELL_TO_PEDAL_4: Stop = Stop::new(Division::Pedal, 11);
 pub const GREAT_TO_PEDAL_8: Stop = Stop::new(Division::Pedal, 12);
 pub const CHOIR_TO_PEDAL_8: Stop = Stop::new(Division::Pedal, 13);
+
+pub enum StopKind {
+    SpeakingStop,
+    Coupler,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+pub struct Stop {
+    offset: u8,
+}
+
+impl Stop {
+    const fn new(div: Division, idx: u8) -> Self {
+        Self {
+            offset: 16 * div.to_u8() + idx,
+        }
+    }
+
+    pub fn try_from(div: Division, idx: u8) -> Option<Self> {
+        // Avoids constructing invalid stops
+        let max_idx = match div {
+            Division::Swell | Division::Pedal => 13u8,
+            Division::Great | Division::Choir => 14u8,
+        };
+        if idx <= max_idx {
+            return Some(Self::new(div, idx));
+        }
+        None
+    }
+
+    pub const fn kind(&self) -> StopKind {
+        if (11 <= self.offset && self.offset <= 13)
+            || (24 <= self.offset && self.offset <= 30)
+            || (41 <= self.offset && self.offset <= 46)
+            || (58 <= self.offset && self.offset <= 61)
+        {
+            StopKind::Coupler
+        } else {
+            StopKind::SpeakingStop
+        }
+    }
+
+    pub const fn div(&self) -> Division {
+        if self.offset < 16 {
+            Division::Swell
+        } else if self.offset < 32 {
+            Division::Great
+        } else if self.offset < 48 {
+            Division::Choir
+        } else {
+            Division::Pedal
+        }
+    }
+
+    pub const fn idx(&self) -> u8 {
+        self.offset % 16
+    }
+
+    pub const fn offset(&self) -> u8 {
+        self.offset
+    }
+}

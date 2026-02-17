@@ -96,10 +96,15 @@ fn midi_message_to_command(message: Message) -> Option<Command> {
                 && controller <= 117
                 && let Some(div) = some_div
             {
-                if u8::from(value) < 64 {
-                    Some(Command::StopOff(Stop::new(div, controller - 102)))
+                let stop = Stop::try_from(div, controller - 102);
+                if let Some(s) = stop {
+                    if u8::from(value) < 64 {
+                        Some(Command::StopOff(s))
+                    } else {
+                        Some(Command::StopOn(s))
+                    }
                 } else {
-                    Some(Command::StopOn(Stop::new(div, controller - 102)))
+                    None
                 }
             } else if controller == 11 {
                 if channel == Channel::Channel5 {

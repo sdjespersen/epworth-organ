@@ -138,12 +138,11 @@ async fn scan_stop_tab_buttons(i2c_bus: &'static I2c0Bus) {
 
             for i in stop_tab_button_debouncers[div as usize].falling_edges() {
                 // Because the raw readings (and hence debouncers) are MSB first, need to invert the stop number.
-                COMMANDS
-                    .send((
-                        Command::StopToggle(Stop::new(div, 15 - i)),
-                        CommandSource::Local,
-                    ))
-                    .await;
+                if let Some(stop) = Stop::try_from(div, 15 - i) {
+                    COMMANDS
+                        .send((Command::StopToggle(stop), CommandSource::Local))
+                        .await;
+                }
             }
         }
         Timer::after_micros(500).await;
