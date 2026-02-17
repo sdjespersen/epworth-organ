@@ -30,24 +30,21 @@ impl<'d> Presets<'d> {
 }
 
 impl<'d> PresetStore for Presets<'d> {
-    async fn save(&mut self, key: u8, value: &u64) {
+    async fn save(&mut self, key: u8, value: u64) {
         let mut data_buffer = [0u8; PAGE_SIZE];
         self.storage
-            .store_item(&mut data_buffer, &key, value)
+            .store_item(&mut data_buffer, &key, &value)
             .await
             .unwrap();
     }
 
     async fn load(&mut self, key: u8) -> u64 {
         let mut data_buffer = [0u8; PAGE_SIZE];
-        let value = self
+        self
             .storage
             .fetch_item::<u64>(&mut data_buffer, &key)
             .await
-            .unwrap();
-        match value {
-            Some(v) => v,
-            None => 0u64,
-        }
+            .unwrap()
+            .unwrap_or(0u64)
     }
 }

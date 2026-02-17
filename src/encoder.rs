@@ -1,8 +1,8 @@
 use crate::{command::Command, event::Event};
 
 pub trait PresetStore {
-    async fn save(&mut self, key: u8, value: &u64);
-    async fn load(&mut self, key: u8) -> u64;
+    fn save(&mut self, key: u8, value: u64) -> impl Future<Output = ()>;
+    fn load(&mut self, key: u8) -> impl Future<Output = u64>;
 }
 
 pub struct Encoder<'d, T: PresetStore> {
@@ -59,7 +59,7 @@ impl<'d, T: PresetStore> Encoder<'d, T> {
             Command::RecallPreset(idx) => {
                 if self.awaiting_save {
                     // Saving a preset is internal; it emits no events.
-                    self.preset_store.save(idx, &self.stops).await;
+                    self.preset_store.save(idx, self.stops).await;
                     // Safety: Disengage save mode if we've already written a preset.
                     self.awaiting_save = false;
                     CommandResult(None, false)
