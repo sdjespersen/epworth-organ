@@ -98,9 +98,11 @@ async fn uart_reader(uart_rx: uart::BufferedUartRx) {
     let mut uart_rdr = UartReader::new(uart_rx);
 
     loop {
-        uart_rdr.feed::<Event>(async |event| {
-            EVENTS.send(event).await;
-        }).await;
+        uart_rdr
+            .feed::<Event>(async |event| {
+                EVENTS.send(event).await;
+            })
+            .await;
     }
 }
 

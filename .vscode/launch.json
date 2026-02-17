@@ -4,14 +4,14 @@
         {
             "type": "probe-rs-debug",
             "request": "attach",
-            "name": "probe-rs debug epworth-organ",
+            "name": "probe-rs debug primary-encoder",
             "cwd": "${workspaceFolder}",
             "connectUnderReset": false,
             "chip": "RP235x",
             "coreConfigs": [
                 {
                     "coreIndex": 0,
-                    "programBinary": "${workspaceFolder}/target/thumbv8m.main-none-eabihf/debug/epworth-organ"
+                    "programBinary": "${workspaceFolder}/target/thumbv8m.main-none-eabihf/debug/primary-encoder"
                 }
             ],
             "consoleLogLevel": "Console"

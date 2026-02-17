@@ -1,3 +1,29 @@
+/// USB MIDI interface for the Epworth organ.
+///
+/// Most software supports automatic MIDI mapping ("MIDI learn") these days, but for details, read on.
+///
+/// The keyboards on the Epworth organ function much like any other non-velocity sensitive MIDI keyboard. The channels
+/// are assigned as follows:
+/// - Swell = Channel 1
+/// - Great = Channel 2
+/// - Choir = Channel 3
+/// - Pedal = Channel 4
+///
+/// All keyboards send "note on" and "note off" messages with fixed velocity 64. The three manuals (swell, great, choir)
+/// span the key range from MIDI note 36 to MIDI note 96, inclusive. The pedal ranges from 36 to 67 (inclusive).
+///
+/// The stops map to continuous controllers that were left undefined in the MIDI spec: 102-117. They function as toggle
+/// switches; a "stop on" is communicated with value 127 and "stop off" with value 0. The channel assignments are the
+/// same as for the keyboards.
+///
+/// "General cancel" is communicated with NRPN 1 value 127 on channel 5.
+///
+/// Pressing a piston (recalling a preset) equates to a MIDI program change on channel 5, plus all the resulting stop
+/// changes.
+///
+/// The swell pedal functions as an expression pedal (CC 11) on channel 1.
+/// The choir pedal functions as an expression pedal (CC 11) on channel 3.
+/// The crescendo pedal functions as an expression pedal (CC 11) on channel 5.
 use usbd_midi::message::channel::Channel;
 use usbd_midi::{Message, UsbMidiPacketReader};
 
@@ -6,7 +32,6 @@ use crate::Division;
 use embassy_rp::{peripherals::USB, usb::Driver};
 use embassy_usb::class::midi::{Receiver, Sender};
 
-/// USB MIDI interface for the Epworth organ.
 use epworth_organ::command::Command;
 use epworth_organ::event::Event;
 use epworth_organ::stops::Stop;
@@ -30,7 +55,7 @@ fn div_cc_bufs(stop_state: u64) -> [[u8; 60]; 4] {
 pub async fn write_event_to_usb<'d>(event: Event, sender: &mut Sender<'d, Driver<'d, USB>>) {
     // Certain events require quite different handling.
     if let Event::PresetRecalled(idx, stop_state) = event {
-        let _ = sender.write_packet(&[0x0C, 0xC5, idx, 0x00]).await;
+        let _ = sender.write_packet(&[0x0C, 0xC4, idx, 0x00]).await;
         for buf in div_cc_bufs(stop_state) {
             let _ = sender.write_packet(&buf).await;
         }
@@ -48,8 +73,8 @@ pub async fn write_event_to_usb<'d>(event: Event, sender: &mut Sender<'d, Driver
     }
     // The rest of the events map to a single 4-byte packet and have uniform handling.
     let some_packet = match event {
-        Event::NoteOff(div, note) => Some([0x08, div as u8 | 0x80, note, 0x80]),
-        Event::NoteOn(div, note) => Some([0x08, div as u8 | 0x90, note, 0x80]),
+        Event::NoteOff(div, note) => Some([0x08, div as u8 | 0x80, note + 36, 0x80]),
+        Event::NoteOn(div, note) => Some([0x08, div as u8 | 0x90, note + 36, 0x80]),
         Event::StopOff(stop) => Some([0x0B, stop.div() as u8 | 0xB0, 102 + stop.idx(), 0x00]),
         Event::StopOn(stop) => Some([0x0B, stop.div() as u8 | 0xB0, 102 + stop.idx(), 0x7F]),
         Event::Expression(div, value) => Some([0x0B, div as u8 | 0xB0, 0x0B, value]),
@@ -75,15 +100,17 @@ fn div_from_channel(channel: Channel) -> Option<Division> {
 fn midi_message_to_command(message: Message) -> Option<Command> {
     match message {
         Message::NoteOff(channel, note, _) => {
+            let note_val: u8 = note.into();
             if let Some(div) = div_from_channel(channel) {
-                Some(Command::NoteOff(div, note.into()))
+                Some(Command::NoteOff(div, note_val - 36))
             } else {
                 None
             }
         }
         Message::NoteOn(channel, note, _) => {
+            let note_val: u8 = note.into();
             if let Some(div) = div_from_channel(channel) {
-                Some(Command::NoteOn(div, note.into()))
+                Some(Command::NoteOn(div, note_val - 36))
             } else {
                 None
             }

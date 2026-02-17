@@ -307,9 +307,11 @@ async fn uart_reader(uart_rx: uart::BufferedUartRx) {
     let mut uart_rdr = UartReader::new(uart_rx);
 
     loop {
-        uart_rdr.feed::<Command>(async |data| {
-            COMMANDS.send((data, CommandSource::Local)).await;
-        }).await;
+        uart_rdr
+            .feed::<Command>(async |data| {
+                COMMANDS.send((data, CommandSource::Local)).await;
+            })
+            .await;
     }
 }
 
