@@ -29,7 +29,6 @@ impl<'d> Presets<'d> {
     }
 }
 
-// TODO: Caching?
 impl<'d> PresetStore for Presets<'d> {
     async fn save(&mut self, key: u8, value: &u64) {
         let mut data_buffer = [0u8; PAGE_SIZE];
