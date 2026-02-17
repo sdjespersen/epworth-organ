@@ -5,6 +5,7 @@ pub mod decoder;
 pub mod encoder;
 pub mod event;
 pub mod stops;
+pub mod uart;
 
 use defmt_rtt as _;
 use serde::{Deserialize, Serialize}; // global logger

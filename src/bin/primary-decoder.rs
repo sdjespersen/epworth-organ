@@ -11,10 +11,9 @@ use embassy_rp::{Peri, bind_interrupts, uart};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::Timer;
-use embedded_io_async::Read;
 use epworth_organ::decoder::Decoder;
 use epworth_organ::event::Event;
-use postcard::accumulator::{CobsAccumulator, FeedResult};
+use epworth_organ::uart::UartReader;
 use static_cell::StaticCell;
 
 bind_interrupts!(struct Irqs {
@@ -95,34 +94,13 @@ async fn write_stop_state(
 }
 
 #[embassy_executor::task]
-async fn uart_reader(mut uart_rx: uart::BufferedUartRx) {
-    let mut raw_buf = [0u8; 32];
-    let mut cobs_acc: CobsAccumulator<128> = CobsAccumulator::new();
+async fn uart_reader(uart_rx: uart::BufferedUartRx) {
+    let mut uart_rdr = UartReader::new(uart_rx);
 
     loop {
-        match uart_rx.read(&mut raw_buf).await {
-            Ok(n) if n > 0 => {
-                let buf = &raw_buf[..n];
-                let mut window = &buf[..];
-
-                'cobs: while !window.is_empty() {
-                    window = match cobs_acc.feed::<Event>(&window) {
-                        FeedResult::Consumed => break 'cobs,
-                        FeedResult::OverFull(new_wind) => new_wind,
-                        FeedResult::DeserError(new_wind) => new_wind,
-                        FeedResult::Success { data, remaining } => {
-                            EVENTS.send(data).await;
-                            remaining
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                defmt::error!("Error reading from UART: {:?}", e);
-                // Handle errors or 0-byte reads (disconnects)
-            }
-            Ok(_) => {}
-        }
+        uart_rdr.feed::<Event>(async |event| {
+            EVENTS.send(event).await;
+        }).await;
     }
 }
 

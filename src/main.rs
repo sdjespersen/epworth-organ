@@ -24,14 +24,14 @@ use embassy_time::Timer;
 use embassy_usb::class::midi as eusb_midi;
 use embassy_usb::class::midi::MidiClass;
 use embassy_usb::{Builder as UsbBuilder, Config as UsbConfig};
-use embedded_io_async::{Read, Write};
+use embedded_io_async::Write;
 use epworth_organ::Division;
 use epworth_organ::command::{Command, CommandSource};
 use epworth_organ::debouncer::Debouncer;
 use epworth_organ::encoder::Encoder;
 use epworth_organ::event::Event;
 use epworth_organ::stops::Stop;
-use postcard::accumulator::{CobsAccumulator, FeedResult};
+use epworth_organ::uart::UartReader;
 use postcard::to_slice_cobs;
 use static_cell::{ConstStaticCell, StaticCell};
 
@@ -303,34 +303,13 @@ async fn usb_midi(spawner: Spawner, usb: Peri<'static, USB>) {
 }
 
 #[embassy_executor::task]
-async fn uart_reader(mut uart_rx: uart::BufferedUartRx) {
-    // TODO: This is copy-pasted from the decoder. Factor it out?
-    let mut raw_buf = [0u8; 32];
-    let mut cobs_acc: CobsAccumulator<128> = CobsAccumulator::new();
+async fn uart_reader(uart_rx: uart::BufferedUartRx) {
+    let mut uart_rdr = UartReader::new(uart_rx);
 
     loop {
-        match uart_rx.read(&mut raw_buf).await {
-            Ok(n) if n > 0 => {
-                let buf = &raw_buf[..n];
-                let mut window = &buf[..];
-
-                'cobs: while !window.is_empty() {
-                    window = match cobs_acc.feed::<Command>(&window) {
-                        FeedResult::Consumed => break 'cobs,
-                        FeedResult::OverFull(new_wind) => new_wind,
-                        FeedResult::DeserError(new_wind) => new_wind,
-                        FeedResult::Success { data, remaining } => {
-                            COMMANDS.send((data, CommandSource::Local)).await;
-                            remaining
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                defmt::error!("Error reading from UART: {:?}", e);
-            }
-            Ok(_) => {}
-        }
+        uart_rdr.feed::<Command>(async |data| {
+            COMMANDS.send((data, CommandSource::Local)).await;
+        }).await;
     }
 }
 
