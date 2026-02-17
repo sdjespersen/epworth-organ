@@ -1,4 +1,4 @@
-use crate::{Division, div_to_u8};
+use crate::Division;
 use serde::{Deserialize, Serialize};
 
 pub enum StopKind {
@@ -14,7 +14,7 @@ pub struct Stop {
 impl Stop {
     pub const fn new(div: Division, idx: u8) -> Self {
         Self {
-            offset: 16 * div_to_u8(div) + idx,
+            offset: 16 * div.to_u8() + idx,
         }
     }
 

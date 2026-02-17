@@ -113,14 +113,12 @@ impl Decoder {
 
         let result = match event {
             Event::NoteOff(div, value) => {
-                let div_idx: u8 = div.into();
-                self.keys_down[div_idx as usize] &= !(1 << value);
+                self.keys_down[div.to_u8() as usize] &= !(1 << value);
                 recompute_note_state = coupled_divisions(div);
                 EventHandlerResult { stop_state: None }
             }
             Event::NoteOn(div, value) => {
-                let div_idx: u8 = div.into();
-                self.keys_down[div_idx as usize] |= 1 << value;
+                self.keys_down[div.to_u8() as usize] |= 1 << value;
                 recompute_note_state = coupled_divisions(div);
                 EventHandlerResult { stop_state: None }
             }
