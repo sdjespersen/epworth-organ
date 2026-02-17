@@ -1,4 +1,4 @@
-use crate::Division;
+use crate::{Division, div_to_u8};
 use serde::{Deserialize, Serialize};
 
 pub enum StopKind {
@@ -8,37 +8,46 @@ pub enum StopKind {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
 pub struct Stop {
-    pub div: Division,
-    pub idx: u8,
-    // kind: StopKind,
+    offset: u8,
 }
 
 impl Stop {
     pub const fn new(div: Division, idx: u8) -> Self {
-        Self { div, idx }
+        Self {
+            offset: 16 * div_to_u8(div) + idx,
+        }
     }
 
     pub const fn kind(&self) -> StopKind {
-        let is_coupler = match self.div {
-            Division::Swell => 11 <= self.idx && self.idx <= 13,
-            Division::Great => 8 <= self.idx && self.idx <= 14,
-            Division::Choir => 9 <= self.idx && self.idx <= 14,
-            Division::Pedal => 10 <= self.idx && self.idx <= 13,
-        };
-        if is_coupler {
+        if (11 <= self.offset && self.offset <= 13)
+            || (24 <= self.offset && self.offset <= 30)
+            || (41 <= self.offset && self.offset <= 46)
+            || (58 <= self.offset && self.offset <= 61)
+        {
             StopKind::Coupler
         } else {
             StopKind::SpeakingStop
         }
     }
 
-    pub const fn offset(&self) -> u8 {
-        match self.div {
-            Division::Swell => 0 + self.idx,
-            Division::Great => 16 + self.idx,
-            Division::Choir => 32 + self.idx,
-            Division::Pedal => 48 + self.idx,
+    pub const fn div(&self) -> Division {
+        if self.offset < 16 {
+            Division::Swell
+        } else if self.offset < 32 {
+            Division::Great
+        } else if self.offset < 48 {
+            Division::Choir
+        } else {
+            Division::Pedal
         }
+    }
+
+    pub const fn idx(&self) -> u8 {
+        self.offset % 16
+    }
+
+    pub const fn offset(&self) -> u8 {
+        self.offset
     }
 }
 

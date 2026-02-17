@@ -127,7 +127,7 @@ impl Decoder {
             Event::StopOff(stop) => {
                 self.stops &= !(1 << stop.offset());
                 if let stops::StopKind::Coupler = stop.kind() {
-                    recompute_note_state = coupled_divisions(stop.div)
+                    recompute_note_state = coupled_divisions(stop.div())
                 }
                 EventHandlerResult {
                     stop_state: Some(self.stop_state()),
@@ -136,7 +136,7 @@ impl Decoder {
             Event::StopOn(stop) => {
                 self.stops |= 1 << stop.offset();
                 if let stops::StopKind::Coupler = stop.kind() {
-                    recompute_note_state = coupled_divisions(stop.div)
+                    recompute_note_state = coupled_divisions(stop.div())
                 }
                 EventHandlerResult {
                     stop_state: Some(self.stop_state()),

@@ -17,14 +17,18 @@ pub enum Division {
     Pedal,
 }
 
+const fn div_to_u8(div: Division) -> u8 {
+    match div {
+        Division::Swell => 0,
+        Division::Great => 1,
+        Division::Choir => 2,
+        Division::Pedal => 3,
+    }
+}
+
 impl Into<u8> for Division {
     fn into(self) -> u8 {
-        match self {
-            Division::Swell => 0,
-            Division::Great => 1,
-            Division::Choir => 2,
-            Division::Pedal => 3,
-        }
+        div_to_u8(self)
     }
 }
 

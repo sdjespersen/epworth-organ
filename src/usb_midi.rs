@@ -50,8 +50,8 @@ pub async fn write_event_to_usb<'d>(event: Event, sender: &mut Sender<'d, Driver
     let some_packet = match event {
         Event::NoteOff(div, note) => Some([0x08, div as u8 | 0x80, note, 0x80]),
         Event::NoteOn(div, note) => Some([0x08, div as u8 | 0x90, note, 0x80]),
-        Event::StopOff(stop) => Some([0x0B, stop.div as u8 | 0xB0, 102 + stop.idx, 0x00]),
-        Event::StopOn(stop) => Some([0x0B, stop.div as u8 | 0xB0, 102 + stop.idx, 0x7F]),
+        Event::StopOff(stop) => Some([0x0B, stop.div() as u8 | 0xB0, 102 + stop.idx(), 0x00]),
+        Event::StopOn(stop) => Some([0x0B, stop.div() as u8 | 0xB0, 102 + stop.idx(), 0x7F]),
         Event::Expression(div, value) => Some([0x0B, div as u8 | 0xB0, 0x0B, value]),
         Event::Crescendo(value) => Some([0x0B, 0xB4, 0x0B, value]),
         Event::PresetRecalled(_, _) => None, // already handled above
