@@ -6,7 +6,6 @@ mod presets;
 mod usb_midi;
 
 use panic_probe as _;
-use usbd_midi::{Message, UsbMidiPacketReader};
 
 use core::cell::RefCell;
 
@@ -39,7 +38,7 @@ use static_cell::{ConstStaticCell, StaticCell};
 use crate::mcp23017::MCP23017;
 use crate::mcp23017::Port;
 use crate::presets::Presets;
-use crate::usb_midi::{midi_message_to_command, write_event_to_usb};
+use crate::usb_midi::{receive_command_from_usb, write_event_to_usb};
 
 type I2c0Bus = Mutex<NoopRawMutex, RefCell<i2c::I2c<'static, I2C0, i2c::Blocking>>>;
 type I2c0Mcp = MCP23017<I2cDevice<'static, NoopRawMutex, i2c::I2c<'static, I2C0, i2c::Blocking>>>;
@@ -262,24 +261,10 @@ async fn usb_midi_reader(
     let mut data = [0u8; 64];
 
     loop {
-        match usb_midi_rx.read_packet(&mut data).await {
-            Ok(n) if n > 0 => {
-                let packet_reader = UsbMidiPacketReader::new(&data, n);
-                for packet in packet_reader.into_iter() {
-                    if let Ok(packet) = packet {
-                        if let Ok(message) = Message::try_from(&packet) {
-                            if let Some(cmd) = midi_message_to_command(message) {
-                                COMMANDS.send((cmd, CommandSource::External)).await;
-                            }
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                defmt::error!("Error reading from USB: {:?}", e);
-            }
-            Ok(_) => {}
-        }
+        receive_command_from_usb(&mut data, &mut usb_midi_rx, async |cmd| {
+            COMMANDS.send((cmd, CommandSource::External)).await;
+        })
+        .await;
     }
 }
 

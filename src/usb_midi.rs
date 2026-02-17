@@ -1,10 +1,10 @@
-use usbd_midi::Message;
 use usbd_midi::message::channel::Channel;
+use usbd_midi::{Message, UsbMidiPacketReader};
 
 use crate::Division;
 
 use embassy_rp::{peripherals::USB, usb::Driver};
-use embassy_usb::class::midi::Sender;
+use embassy_usb::class::midi::{Receiver, Sender};
 
 /// USB MIDI interface for the Epworth organ.
 use epworth_organ::command::Command;
@@ -72,7 +72,7 @@ fn div_from_channel(channel: Channel) -> Option<Division> {
     }
 }
 
-pub fn midi_message_to_command(message: Message) -> Option<Command> {
+fn midi_message_to_command(message: Message) -> Option<Command> {
     match message {
         Message::NoteOff(channel, note, _) => {
             if let Some(div) = div_from_channel(channel) {
@@ -116,4 +116,29 @@ pub fn midi_message_to_command(message: Message) -> Option<Command> {
         Message::Reset => Some(Command::GeneralCancel()),
         _ => None,
     }
+}
+
+pub async fn receive_command_from_usb<'d>(
+    data: &mut [u8; 64],
+    receiver: &mut Receiver<'d, Driver<'d, USB>>,
+    mut handle_cmd: impl AsyncFnMut(Command),
+) {
+    match receiver.read_packet(data).await {
+        Ok(n) if n > 0 => {
+            let packet_reader = UsbMidiPacketReader::new(&data, n);
+            for packet in packet_reader.into_iter() {
+                if let Ok(packet) = packet {
+                    if let Ok(message) = Message::try_from(&packet) {
+                        if let Some(cmd) = midi_message_to_command(message) {
+                            handle_cmd(cmd).await;
+                        }
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            defmt::error!("Error reading from USB: {:?}", e);
+        }
+        Ok(_) => {}
+    };
 }
