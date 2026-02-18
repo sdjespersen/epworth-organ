@@ -13,7 +13,7 @@ use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_rp::flash::Flash;
 use embassy_rp::gpio::{AnyPin, Level, Output};
-use embassy_rp::peripherals::{I2C0, SPI1, UART0, USB};
+use embassy_rp::peripherals::{I2C0, SPI0, UART0, USB};
 use embassy_rp::spi;
 use embassy_rp::{Peri, bind_interrupts, i2c, uart, usb as rp_usb};
 use embassy_sync::blocking_mutex::Mutex;
@@ -154,7 +154,7 @@ async fn scan_stop_tab_buttons(i2c_bus: &'static I2c0Bus) {
 
 #[embassy_executor::task]
 async fn scan_pistons(
-    mut spi: spi::Spi<'static, SPI1, spi::Async>,
+    mut spi: spi::Spi<'static, SPI0, spi::Async>,
     load_pin: Peri<'static, AnyPin>,
 ) {
     let mut piston_debouncer = Debouncer::<5>::new(0xFFFF);
@@ -347,14 +347,14 @@ async fn main(spawner: Spawner) {
     let i2c_bus = I2C_BUS.init(Mutex::new(i2c.into()));
 
     let spi = spi::Spi::new_rxonly(
-        p.SPI1,
-        p.PIN_10,
-        p.PIN_12,
+        p.SPI0,
+        p.PIN_18,
+        p.PIN_16,
         p.DMA_CH1,
         p.DMA_CH2,
         spi::Config::default(),
     );
-    spawner.spawn(scan_pistons(spi, p.PIN_11.into())).unwrap();
+    spawner.spawn(scan_pistons(spi, p.PIN_17.into())).unwrap();
 
     spawner
         .spawn(main_event_handler(
@@ -368,8 +368,8 @@ async fn main(spawner: Spawner) {
     let rx_buf = &mut RX_BUF.init([0; 16])[..];
     let uart_txrx = uart::BufferedUart::new(
         p.UART0,
-        p.PIN_16,
-        p.PIN_17,
+        p.PIN_0,
+        p.PIN_1,
         Irqs,
         tx_buf,
         rx_buf,
