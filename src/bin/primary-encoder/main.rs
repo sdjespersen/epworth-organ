@@ -11,9 +11,8 @@ use core::cell::RefCell;
 
 use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::Spawner;
-use embassy_rp::adc;
 use embassy_rp::flash::Flash;
-use embassy_rp::gpio::{AnyPin, Level, Output, Pull};
+use embassy_rp::gpio::{AnyPin, Level, Output};
 use embassy_rp::peripherals::{I2C0, SPI1, UART0, USB};
 use embassy_rp::spi;
 use embassy_rp::{Peri, bind_interrupts, i2c, uart, usb as rp_usb};
@@ -46,7 +45,6 @@ type I2c0Mcp =
     MCP23017<I2cDevice<'static, CriticalSectionRawMutex, i2c::I2c<'static, I2C0, i2c::Blocking>>>;
 
 bind_interrupts!(struct Irqs {
-    ADC_IRQ_FIFO => adc::InterruptHandler;
     USBCTRL_IRQ => rp_usb::InterruptHandler<USB>;
     UART0_IRQ => uart::BufferedInterruptHandler<UART0>;
 });
@@ -202,31 +200,6 @@ async fn scan_pistons(
         }
 
         Timer::after_micros(500).await;
-    }
-}
-
-#[embassy_executor::task]
-async fn read_crescendo_position(
-    mut cresc_adc: adc::Adc<'static, adc::Async>,
-    mut cresc_channel: adc::Channel<'static>,
-) {
-    let mut cresc_pos = 0u8;
-    let mut level = 0u16;
-
-    loop {
-        // Pico 2 ADC has 12 bits of resolution, but it's pretty noisy. We do a few things here to help with that:
-        // - Smooth out the readings with exponential decay (weighted average with current reading).
-        // - Drop the 5 least significant bits (yes, quite a few!). The resulting reading is MIDI-compatible (7 bits).
-        let raw_level = cresc_adc.read(&mut cresc_channel).await.unwrap();
-        level = (level * 7 + raw_level) / 8;
-        let new_cresc_pos = ((level >> 5) & 0x7F) as u8;
-        if new_cresc_pos != cresc_pos {
-            cresc_pos = new_cresc_pos;
-            COMMANDS
-                .send((Command::Crescendo(cresc_pos), CommandSource::Local))
-                .await;
-        }
-        Timer::after_millis(1).await;
     }
 }
 
@@ -409,12 +382,6 @@ async fn main(spawner: Spawner) {
     setup_mcps(i2c_bus);
     spawner.spawn(scan_stop_tab_buttons(i2c_bus)).unwrap();
     spawner.spawn(write_stop_state_to_leds(i2c_bus)).unwrap();
-    spawner
-        .spawn(read_crescendo_position(
-            adc::Adc::new(p.ADC, Irqs, adc::Config::default()),
-            adc::Channel::new_pin(p.PIN_26, Pull::None),
-        ))
-        .unwrap();
     spawner.spawn(usb_midi(spawner, p.USB)).unwrap();
 
     defmt::info!("All tasks spawned.");
