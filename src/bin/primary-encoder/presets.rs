@@ -40,8 +40,7 @@ impl<'d> PresetStore for Presets<'d> {
 
     async fn load(&mut self, key: u8) -> u64 {
         let mut data_buffer = [0u8; PAGE_SIZE];
-        self
-            .storage
+        self.storage
             .fetch_item::<u64>(&mut data_buffer, &key)
             .await
             .unwrap()

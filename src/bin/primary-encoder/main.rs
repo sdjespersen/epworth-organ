@@ -13,11 +13,12 @@ use embassy_embedded_hal::shared_bus::blocking::i2c::I2cDevice;
 use embassy_executor::Spawner;
 use embassy_rp::adc;
 use embassy_rp::flash::Flash;
-use embassy_rp::gpio::{AnyPin, Input, Level, Output, Pull};
-use embassy_rp::peripherals::{I2C0, UART0, USB};
+use embassy_rp::gpio::{AnyPin, Level, Output, Pull};
+use embassy_rp::peripherals::{I2C0, SPI1, UART0, USB};
+use embassy_rp::spi;
 use embassy_rp::{Peri, bind_interrupts, i2c, uart, usb as rp_usb};
 use embassy_sync::blocking_mutex::Mutex;
-use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_time::Timer;
@@ -40,8 +41,9 @@ use crate::mcp23017::Port;
 use crate::presets::Presets;
 use crate::usb_midi::{receive_command_from_usb, write_event_to_usb};
 
-type I2c0Bus = Mutex<NoopRawMutex, RefCell<i2c::I2c<'static, I2C0, i2c::Blocking>>>;
-type I2c0Mcp = MCP23017<I2cDevice<'static, NoopRawMutex, i2c::I2c<'static, I2C0, i2c::Blocking>>>;
+type I2c0Bus = Mutex<CriticalSectionRawMutex, RefCell<i2c::I2c<'static, I2C0, i2c::Blocking>>>;
+type I2c0Mcp =
+    MCP23017<I2cDevice<'static, CriticalSectionRawMutex, i2c::I2c<'static, I2C0, i2c::Blocking>>>;
 
 bind_interrupts!(struct Irqs {
     ADC_IRQ_FIFO => adc::InterruptHandler;
@@ -49,6 +51,9 @@ bind_interrupts!(struct Irqs {
     UART0_IRQ => uart::BufferedInterruptHandler<UART0>;
 });
 
+// These two indices have to be determined when everything is hooked up.
+const SAVE_PISTON_IDX: u8 = 7;
+const GENERAL_CANCEL_PISTON_IDX: u8 = 6;
 const MCP_I2C_ADDRESSES: [[u8; 2]; 4] = [[0x20, 0x21], [0x22, 0x23], [0x24, 0x25], [0x26, 0x27]];
 const DIVISIONS: [Division; 4] = [
     Division::Swell,
@@ -151,44 +156,33 @@ async fn scan_stop_tab_buttons(i2c_bus: &'static I2c0Bus) {
 
 #[embassy_executor::task]
 async fn scan_pistons(
+    mut spi: spi::Spi<'static, SPI1, spi::Async>,
     load_pin: Peri<'static, AnyPin>,
-    clock_pin: Peri<'static, AnyPin>,
-    data_pin: Peri<'static, AnyPin>,
 ) {
     let mut piston_debouncer = Debouncer::<5>::new(0xFFFF);
 
-    // Load piston states into 74HC165 shift register
     let mut piston_load_pin = Output::new(load_pin, Level::Low);
-    let mut piston_clock_pin = Output::new(clock_pin, Level::Low);
-    let piston_data_pin = Input::new(data_pin, Pull::Up);
 
     loop {
+        // Load piston states into 74HC165 shift registers
         piston_load_pin.set_low();
         piston_load_pin.set_high();
 
-        let mut raw_piston_reading = 0u16;
-        // Ensure clock pin low first...
-        piston_clock_pin.set_low();
+        let mut rx_buf = [0u8; 2]; // 2 bytes
+        let _ = spi.read(&mut rx_buf).await;
 
-        // ...then clock the data into the piston readings.
-        for i in 0..8 {
-            if piston_data_pin.is_high() {
-                raw_piston_reading |= 1 << i;
-            }
-            piston_clock_pin.set_high();
-            piston_clock_pin.set_low();
-        }
-        // Nothing is hooked up to 8-15 right now...
-        raw_piston_reading |= 0xFF00;
+        // TODO: This part is prototype. Nothing is hooked up to 8-15 right now, so we cancel it out...
+        // Eventually we will read 4 bytes off SPI and use a u32 in the debouncer.
+        let raw_piston_reading = rx_buf[0] as u16 | ((rx_buf[1] as u16) << 8) | 0xFF00;
 
         piston_debouncer.update(raw_piston_reading);
 
         for i in piston_debouncer.falling_edges() {
-            if i == 0 {
+            if i == SAVE_PISTON_IDX {
                 COMMANDS
                     .send((Command::EnableSave(true), CommandSource::Local))
                     .await;
-            } else if i == 1 {
+            } else if i == GENERAL_CANCEL_PISTON_IDX {
                 COMMANDS
                     .send((Command::GeneralCancel(), CommandSource::Local))
                     .await;
@@ -379,6 +373,16 @@ async fn main(spawner: Spawner) {
     static I2C_BUS: StaticCell<I2c0Bus> = StaticCell::new();
     let i2c_bus = I2C_BUS.init(Mutex::new(i2c.into()));
 
+    let spi = spi::Spi::new_rxonly(
+        p.SPI1,
+        p.PIN_10,
+        p.PIN_12,
+        p.DMA_CH1,
+        p.DMA_CH2,
+        spi::Config::default(),
+    );
+    spawner.spawn(scan_pistons(spi, p.PIN_11.into())).unwrap();
+
     spawner
         .spawn(main_event_handler(
             PRESET_STORE.init(Presets::new(Flash::new(p.FLASH, p.DMA_CH0))),
@@ -405,13 +409,6 @@ async fn main(spawner: Spawner) {
     setup_mcps(i2c_bus);
     spawner.spawn(scan_stop_tab_buttons(i2c_bus)).unwrap();
     spawner.spawn(write_stop_state_to_leds(i2c_bus)).unwrap();
-    spawner
-        .spawn(scan_pistons(
-            p.PIN_11.into(),
-            p.PIN_12.into(),
-            p.PIN_13.into(),
-        ))
-        .unwrap();
     spawner
         .spawn(read_crescendo_position(
             adc::Adc::new(p.ADC, Irqs, adc::Config::default()),
