@@ -6,7 +6,8 @@ use panic_probe as _;
 
 use embassy_executor::Spawner;
 use embassy_rp::gpio::{AnyPin, Level, Output};
-use embassy_rp::peripherals::UART0;
+use embassy_rp::peripherals::{SPI0, UART0};
+use embassy_rp::spi;
 use embassy_rp::{Peri, bind_interrupts, uart};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -30,10 +31,7 @@ const NIBBLE_REVERSE_LOOKUP: [u8; 16] = [
 static EVENTS: Channel<CriticalSectionRawMutex, Event, 8> = Channel::new();
 static STOP_STATE: Signal<CriticalSectionRawMutex, u64> = Signal::new();
 
-fn interleave_bits(a: u16, b: u16) -> u32 {
-    let mut x = a as u32;
-    let mut y = b as u32;
-
+fn interleave_bits(mut x: u32, mut y: u32) -> u32 {
     for i in (0..4).rev() {
         x = (x | (x << S[i])) & B[i];
         y = (y | (y << S[i])) & B[i];
@@ -43,12 +41,9 @@ fn interleave_bits(a: u16, b: u16) -> u32 {
 
 #[embassy_executor::task]
 async fn write_stop_state(
-    data_pin: Peri<'static, AnyPin>,
-    clock_pin: Peri<'static, AnyPin>,
+    mut spi: spi::Spi<'static, SPI0, spi::Async>,
     latch_pin: Peri<'static, AnyPin>,
 ) {
-    let mut stops_data_pin = Output::new(data_pin, Level::Low);
-    let mut stops_clock_pin = Output::new(clock_pin, Level::Low);
     let mut stops_latch_pin = Output::new(latch_pin, Level::Low);
 
     loop {
@@ -60,33 +55,34 @@ async fn write_stop_state(
 
         stop_state = STOP_STATE.try_take().unwrap_or(stop_state);
 
+        // There's a lot going on the in the next few paragraphs.
+        //
+        // First off, the stop state saved in this program is ordered logically in terms of manuals: swell, great,
+        // choir, and finally pedal. However, the way the stops are electrically wired in the combination action box is
+        // completely different. From organist's left to right, it goes swell, pedal, swell, pedal, ... until the swell
+        // and pedal stops are exhausted, and then it picks up with great, choir, great, choir, etc. This means that
+        // we need to "interleave" the bits of the swell stop state with the bits of the pedal stop state, and same for
+        // the great and the choir.
+        //
+        // Second, the wiring of the outputs on the MIC5891YN line drivers necessitates a further reshuffling. Because
+        // of the pinout on the chip, we need to remap the bit positions in each byte as follows:
+        // 0 -> 4, 1 -> 5, 2 -> 6, 3 -> 7, 4 -> 3, 5 -> 2, 6 -> 1, 7 -> 0
+        // Reversing the high nibble and then swapping high and low nibbles accomplishes this.
         let left_half = interleave_bits(
-            (stop_state >> 16 & 0xFFFF) as u16,
-            (stop_state >> 32 & 0xFFFF) as u16,
+            (stop_state >> 16 & 0xFFFF) as u32,
+            (stop_state >> 32 & 0xFFFF) as u32,
         );
         let right_half = interleave_bits(
-            (stop_state >> 48 & 0xFFFF) as u16,
-            (stop_state & 0xFFFF) as u16,
+            (stop_state >> 48 & 0xFFFF) as u32,
+            (stop_state & 0xFFFF) as u32,
         );
 
-        for val in [right_half, left_half] {
-            for i in 0..4 {
-                let mut to_write = ((val >> (8 * i)) & 0xFF) as u8;
-                // Reverse lower nibble
-                to_write = (to_write & 0xF0) | NIBBLE_REVERSE_LOOKUP[(to_write & 0x0F) as usize];
-
-                // Manual ShiftOut
-                for bit in 0..8 {
-                    if (to_write >> bit) & 1 == 1 {
-                        stops_data_pin.set_high();
-                    } else {
-                        stops_data_pin.set_low();
-                    }
-                    stops_clock_pin.set_high();
-                    stops_clock_pin.set_low();
-                }
-            }
+        let mut buf: [u8; 8] = ((left_half as u64) << 32 | (right_half as u64)).to_le_bytes();
+        for i in 0..buf.len() {
+            // Reverse high nibble, then swap nibbles
+            buf[i] = ((buf[i] & 0x0F) << 4) | NIBBLE_REVERSE_LOOKUP[((buf[i] & 0xF0) >> 4) as usize];
         }
+        let _ = spi.write(&buf).await;
 
         stops_latch_pin.set_high();
         stops_latch_pin.set_low();
@@ -137,8 +133,8 @@ async fn main(spawner: Spawner) {
     let rx_buf = &mut RX_BUF.init([0; 16])[..];
     let uart_txrx = uart::BufferedUart::new(
         p.UART0,
-        p.PIN_16,
-        p.PIN_17,
+        p.PIN_12,
+        p.PIN_13,
         Irqs,
         tx_buf,
         rx_buf,
@@ -148,12 +144,15 @@ async fn main(spawner: Spawner) {
     spawner.spawn(uart_reader(uart_rx)).unwrap();
     // spawner.spawn(uart_writer(uart_tx)).unwrap();
 
+    let spi = spi::Spi::new_txonly(
+        p.SPI0,
+        p.PIN_18,
+        p.PIN_19,
+        p.DMA_CH0,
+        spi::Config::default(),
+    );
     spawner
-        .spawn(write_stop_state(
-            p.PIN_18.into(),
-            p.PIN_20.into(),
-            p.PIN_19.into(),
-        ))
+        .spawn(write_stop_state(spi, p.PIN_20.into()))
         .unwrap();
     // Enable stops output now that the writer task is ready.
     stops_oe_pin.set_low();
