@@ -133,8 +133,8 @@ async fn main(spawner: Spawner) {
     let rx_buf = &mut RX_BUF.init([0; 16])[..];
     let uart_txrx = uart::BufferedUart::new(
         p.UART0,
-        p.PIN_12,
-        p.PIN_13,
+        p.PIN_0,
+        p.PIN_1,
         Irqs,
         tx_buf,
         rx_buf,
