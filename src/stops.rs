@@ -78,6 +78,18 @@ pub struct Stop {
     offset: u8,
 }
 
+pub const fn offset_to_div(offset: u8) -> Division {
+    if offset < 16 {
+        Division::Swell
+    } else if offset < 32 {
+        Division::Great
+    } else if offset < 48 {
+        Division::Choir
+    } else {
+        Division::Pedal
+    }
+}
+
 impl Stop {
     const fn new(div: Division, idx: u8) -> Self {
         Self {
@@ -85,7 +97,7 @@ impl Stop {
         }
     }
 
-    pub fn try_from(div: Division, idx: u8) -> Option<Self> {
+    pub const fn try_from(div: Division, idx: u8) -> Option<Self> {
         // Avoids constructing invalid stops
         let max_idx = match div {
             Division::Swell | Division::Pedal => 13u8,
@@ -110,15 +122,7 @@ impl Stop {
     }
 
     pub const fn div(&self) -> Division {
-        if self.offset < 16 {
-            Division::Swell
-        } else if self.offset < 32 {
-            Division::Great
-        } else if self.offset < 48 {
-            Division::Choir
-        } else {
-            Division::Pedal
-        }
+        offset_to_div(self.offset)
     }
 
     pub const fn idx(&self) -> u8 {

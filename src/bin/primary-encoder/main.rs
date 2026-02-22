@@ -30,7 +30,7 @@ use epworth_organ::command::{Command, CommandSource};
 use epworth_organ::debouncer::Debouncer;
 use epworth_organ::encoder::Encoder;
 use epworth_organ::event::Event;
-use epworth_organ::stops::Stop;
+use epworth_organ::stops::{Stop, offset_to_div};
 use epworth_organ::uart::UartReader;
 use postcard::to_slice_cobs;
 use static_cell::{ConstStaticCell, StaticCell};
@@ -123,29 +123,25 @@ async fn write_stop_state_to_leds(i2c_bus: &'static I2c0Bus) {
 #[embassy_executor::task]
 async fn scan_stop_tab_buttons(i2c_bus: &'static I2c0Bus) {
     let mut mcp_pairs = get_mcps(i2c_bus);
-    let mut stop_tab_button_debouncers: [Debouncer<5>; 4] = [
-        Debouncer::<5>::new(0xFFFF),
-        Debouncer::<5>::new(0xFFFF),
-        Debouncer::<5>::new(0xFFFF),
-        Debouncer::<5>::new(0xFFFF),
-    ];
+    let mut stop_tab_button_debouncer: Debouncer<5> = Debouncer::<5>::new(!0u64);
 
     loop {
-        for (mcp_pair, div) in mcp_pairs.iter_mut().zip(DIVISIONS) {
+        let mut raw_reading = 0u64;
+        for (j, mcp_pair) in mcp_pairs.iter_mut().enumerate() {
             // These readings are L-to-R looking at the front of the stop tab panels, aka MSB first.
-            let mut raw_reading = 0x01u16; // LSB always 1, not hooked up
-            raw_reading |= ((mcp_pair[0].read_gpio(Port::GPIOA).unwrap() & 0x01) as u16) << 8;
-            raw_reading |= ((mcp_pair[0].read_gpio(Port::GPIOB).unwrap() & 0x7F) as u16) << 9;
-            raw_reading |= ((mcp_pair[1].read_gpio(Port::GPIOB).unwrap() & 0x7F) as u16) << 1;
-            stop_tab_button_debouncers[div as usize].update(raw_reading);
-
-            for i in stop_tab_button_debouncers[div as usize].falling_edges() {
-                // Because the raw readings (and hence debouncers) are MSB first, need to invert the stop number.
-                if let Some(stop) = Stop::try_from(div, 15 - i) {
-                    COMMANDS
-                        .send((Command::StopToggle(stop), CommandSource::Local))
-                        .await;
-                }
+            let mut raw_div_reading = 0x01u16; // LSB always 1, not hooked up
+            raw_div_reading |= ((mcp_pair[0].read_gpio(Port::GPIOA).unwrap() & 0x01) as u16) << 8;
+            raw_div_reading |= ((mcp_pair[0].read_gpio(Port::GPIOB).unwrap() & 0x7F) as u16) << 9;
+            raw_div_reading |= ((mcp_pair[1].read_gpio(Port::GPIOB).unwrap() & 0x7F) as u16) << 1;
+            raw_reading |= (raw_div_reading as u64) << (16 * j);
+        }
+        stop_tab_button_debouncer.update(raw_reading);
+        for i in stop_tab_button_debouncer.falling_edges() {
+            // Because the raw readings (and hence debouncers) are MSB first, need to invert the stop number.
+            if let Some(stop) = Stop::try_from(offset_to_div(i), 15 - (i % 16)) {
+                COMMANDS
+                    .send((Command::StopToggle(stop), CommandSource::Local))
+                    .await;
             }
         }
         Timer::after_micros(500).await;
@@ -157,7 +153,7 @@ async fn scan_pistons(
     mut spi: spi::Spi<'static, SPI0, spi::Async>,
     load_pin: Peri<'static, AnyPin>,
 ) {
-    let mut piston_debouncer = Debouncer::<5>::new(0xFFFF);
+    let mut piston_debouncer = Debouncer::<5>::new(!0u64);
 
     let mut piston_load_pin = Output::new(load_pin, Level::Low);
 
@@ -166,11 +162,13 @@ async fn scan_pistons(
         piston_load_pin.set_low();
         piston_load_pin.set_high();
 
-        let mut rx_buf = [0u8; 2]; // 2 bytes
+        let mut rx_buf = [0u8; 4];
         let _ = spi.read(&mut rx_buf).await;
 
-        // TODO: Needs modification now that we have 32 switches.
-        let raw_piston_reading = rx_buf[0] as u16 | ((rx_buf[1] as u16) << 8);
+        let raw_piston_reading = rx_buf[0] as u64
+            | ((rx_buf[1] as u64) << 8)
+            | ((rx_buf[2] as u64) << 16)
+            | ((rx_buf[3] as u64) << 24);
 
         piston_debouncer.update(raw_piston_reading);
 

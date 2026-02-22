@@ -80,7 +80,8 @@ async fn write_stop_state(
         let mut buf: [u8; 8] = ((left_half as u64) << 32 | (right_half as u64)).to_le_bytes();
         for i in 0..buf.len() {
             // Reverse high nibble, then swap nibbles
-            buf[i] = ((buf[i] & 0x0F) << 4) | NIBBLE_REVERSE_LOOKUP[((buf[i] & 0xF0) >> 4) as usize];
+            buf[i] =
+                ((buf[i] & 0x0F) << 4) | NIBBLE_REVERSE_LOOKUP[((buf[i] & 0xF0) >> 4) as usize];
         }
         let _ = spi.write(&buf).await;
 
