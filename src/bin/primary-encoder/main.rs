@@ -169,9 +169,8 @@ async fn scan_pistons(
         let mut rx_buf = [0u8; 2]; // 2 bytes
         let _ = spi.read(&mut rx_buf).await;
 
-        // TODO: This part is prototype. Nothing is hooked up to 8-15 right now, so we cancel it out...
-        // Eventually we will read 4 bytes off SPI and use a u32 in the debouncer.
-        let raw_piston_reading = rx_buf[0] as u16 | ((rx_buf[1] as u16) << 8) | 0xFF00;
+        // TODO: Needs modification now that we have 32 switches.
+        let raw_piston_reading = rx_buf[0] as u16 | ((rx_buf[1] as u16) << 8);
 
         piston_debouncer.update(raw_piston_reading);
 
@@ -192,7 +191,7 @@ async fn scan_pistons(
         }
 
         for i in piston_debouncer.rising_edges() {
-            if i == 0 {
+            if i == SAVE_PISTON_IDX {
                 COMMANDS
                     .send((Command::EnableSave(false), CommandSource::Local))
                     .await;
