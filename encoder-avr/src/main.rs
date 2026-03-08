@@ -123,9 +123,9 @@ fn main() -> ! {
 
     // For controlling the shift registers
     let mut oe = pins.d5.into_output();
-    let mut clk = pins.d4.into_output();
-    let mut latch = pins.d3.into_output();
-    let mut dta = pins.d2.into_output();
+    let mut latch = pins.d4.into_output();
+    let mut dta = pins.d3.into_output();
+    let mut clk = pins.d2.into_output();
 
     oe.set_high(); // Disable outputs initially
 
