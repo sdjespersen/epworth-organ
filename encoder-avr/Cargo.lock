@@ -204,17 +204,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "embedded-midi"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26119337828c4c6a29d9c1661962eeec2a3f884b859d5713a70c6c4143988497"
-dependencies = [
- "embedded-hal 0.2.7",
- "midi-types",
- "nb 1.1.0",
-]
-
-[[package]]
 name = "embedded-storage"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -236,8 +225,6 @@ dependencies = [
  "arduino-hal",
  "embedded-hal 1.0.0",
  "embedded-hal-bus 0.3.0",
- "embedded-midi",
- "midi-types",
  "panic-abort",
  "panic-halt",
  "ufmt",
@@ -445,12 +432,6 @@ name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
-
-[[package]]
-name = "midi-types"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef0bbe5256e5c434947d790788426bb65773502784aed7b23408f7e7fb4d8eb5"
 
 [[package]]
 name = "nb"

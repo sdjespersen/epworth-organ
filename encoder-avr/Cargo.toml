@@ -8,8 +8,6 @@ panic-abort = "0.3.2"
 panic-halt = "1.0.0"
 ufmt = "0.2.0"
 embedded-hal-bus = { version = "0.3.0", features = ["portable-atomic"] }
-embedded-midi = "0.1.2"
-midi-types = "0.1.7"
 embedded-hal = "1.0.0"
 
 # not on crates.io so we fetch it via github
