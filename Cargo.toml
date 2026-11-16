@@ -1,5 +1,5 @@
 [package]
-name = "epworth-organ-encoder-avr"
+name = "epworth-organ-combo-action-avr"
 version = "0.1.0"
 edition = "2024"
 
