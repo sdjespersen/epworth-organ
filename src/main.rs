@@ -81,37 +81,6 @@ fn config_mcp_pair<I2C: I2c>(mcp_pair: &mut [MCP23017<I2C>; 2]) -> Result<(), ()
     Ok(())
 }
 
-// Hardware bypass recovery for Arduino Nano (ATmega328P)
-fn recover_i2c_bus() {
-    // Yeah, this is kinda ridiculous. Gemini told me to do it. Yikes?
-    unsafe {
-        let twcr = 0xBC as *mut u8; // TWI Control Register
-        let portc = 0x28 as *mut u8; // PORTC Data Register
-        let ddrc = 0x27 as *mut u8; // PORTC Direction Register
-
-        // 1. Disable TWI hardware by clearing TWEN
-        core::ptr::write_volatile(twcr, core::ptr::read_volatile(twcr) & !(1 << 2));
-
-        // 2. Set PC5 (SCL pin) as Output
-        core::ptr::write_volatile(ddrc, core::ptr::read_volatile(ddrc) | (1 << 5));
-
-        // 3. 9-Pulse clock sequence to free hung slaves
-        for _ in 0..9 {
-            core::ptr::write_volatile(portc, core::ptr::read_volatile(portc) & !(1 << 5)); // Low
-            arduino_hal::delay_us(10);
-            core::ptr::write_volatile(portc, core::ptr::read_volatile(portc) | (1 << 5)); // High
-            arduino_hal::delay_us(10);
-        }
-
-        // 4. Set SCL pin back to pull-up input
-        core::ptr::write_volatile(ddrc, core::ptr::read_volatile(ddrc) & !(1 << 5));
-        core::ptr::write_volatile(portc, core::ptr::read_volatile(portc) | (1 << 5));
-
-        // 5. Re-enable TWI hardware
-        core::ptr::write_volatile(twcr, core::ptr::read_volatile(twcr) | (1 << 2));
-    }
-}
-
 #[arduino_hal::entry]
 fn main() -> ! {
     let dp = arduino_hal::Peripherals::take().unwrap();
@@ -198,7 +167,7 @@ fn main() -> ! {
                 stop_tab_button_debouncers[div].for_each_falling_edge(|i| {
                     stop_state[div] ^= (1 << i) as u16;
 
-                    write_stop_state_to_leds(&stop_state[div], mcp_pair);
+                    let _ = write_stop_state_to_leds(&stop_state[div], mcp_pair);
                 });
             }
         }
@@ -228,7 +197,7 @@ fn main() -> ! {
                 } else if i == GC_PISTON_IDX {
                     for (div, mcp_pair) in mcps.iter_mut().enumerate() {
                         stop_state[div] = 0;
-                        write_stop_state_to_leds(&stop_state[div], mcp_pair).is_err();
+                        let _ = write_stop_state_to_leds(&stop_state[div], mcp_pair).is_err();
                     }
                 } else {
                     if awaiting_save_preset {
@@ -239,7 +208,7 @@ fn main() -> ! {
                     } else {
                         for (div, mcp_pair) in mcps.iter_mut().enumerate() {
                             stop_state[div] = presets[i as usize][div];
-                            write_stop_state_to_leds(&stop_state[div], mcp_pair).is_err();
+                            let _ = write_stop_state_to_leds(&stop_state[div], mcp_pair).is_err();
                         }
                     }
                 }
