@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-panic-abort = "0.3.2"
 panic-halt = "1.0.0"
 ufmt = "0.2.0"
 embedded-hal-bus = { version = "0.3.0", features = ["portable-atomic"] }
@@ -15,3 +14,19 @@ embedded-hal = "1.0.0"
 git = "https://github.com/rahix/avr-hal"
 rev = "ff4909c00ceee76d60f8bd7cc95bc0f3e2ab673f"
 features = ["arduino-nano"]
+
+[profile.dev]
+panic = "abort"
+lto = true
+opt-level = "s"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+debug = true
+lto = true
+opt-level = "s"
+
+[unstable]
+build-std = ["core"]
+build-std-features = ["panic_immediate_abort"]

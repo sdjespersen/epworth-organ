@@ -21,8 +21,6 @@ const NIBBLE_REVERSE_LOOKUP: [u8; 16] = [
 const SAVE_PISTON_IDX: u8 = 0;
 const GC_PISTON_IDX: u8 = 1;
 
-const MAX_BUS_RESET_RETRIES: u32 = 16;
-
 const STOP_TAB_BUTTON_POLL_ITVL_TICKS: u32 = 5;
 const PISTON_POLL_ITVL_TICKS: u32 = 5;
 const LED_TOGGLE_ITVL_TICKS: u32 = 1_000;
@@ -170,7 +168,6 @@ fn main() -> ! {
     let mut piston_load_pin = pins.d10.into_output();
 
     let mut ticks = 0u32;
-    let mut bus_reset_retry_attempts = 0u32;
 
     let mut awaiting_save_preset = false;
     let mut presets = [[0u16; 4]; 8];
@@ -184,9 +181,6 @@ fn main() -> ! {
     let mut stop_state: [u16; 4] = [0u16; 4];
     let mut piston_debouncer = Debouncer::<5>::new(0xFFFF);
 
-    // Global flag to track if the bus was corrupted during this tick
-    let mut bus_hang_detected = false;
-
     // Now that we're done with setup, enable shift register outputs.
     oe.set_low();
 
@@ -199,21 +193,13 @@ fn main() -> ! {
         // --- Stop Tabs ---
         if ticks % STOP_TAB_BUTTON_POLL_ITVL_TICKS == 0 {
             for (div, mcp_pair) in mcps.iter_mut().enumerate() {
-                match read_stop_tabs(mcp_pair) {
-                    Ok(readings) => {
-                        stop_tab_button_debouncers[div].update(readings);
-                        stop_tab_button_debouncers[div].for_each_falling_edge(|i| {
-                            stop_state[div] ^= (1 << i) as u16;
+                let readings = read_stop_tabs(mcp_pair).unwrap();
+                stop_tab_button_debouncers[div].update(readings);
+                stop_tab_button_debouncers[div].for_each_falling_edge(|i| {
+                    stop_state[div] ^= (1 << i) as u16;
 
-                            if write_stop_state_to_leds(&stop_state[div], mcp_pair).is_err() {
-                                bus_hang_detected = true;
-                            }
-                        });
-                    }
-                    Err(_) => {
-                        bus_hang_detected = true;
-                    }
-                }
+                    write_stop_state_to_leds(&stop_state[div], mcp_pair);
+                });
             }
         }
 
@@ -242,9 +228,7 @@ fn main() -> ! {
                 } else if i == GC_PISTON_IDX {
                     for (div, mcp_pair) in mcps.iter_mut().enumerate() {
                         stop_state[div] = 0;
-                        if write_stop_state_to_leds(&stop_state[div], mcp_pair).is_err() {
-                            bus_hang_detected = true;
-                        }
+                        write_stop_state_to_leds(&stop_state[div], mcp_pair).is_err();
                     }
                 } else {
                     if awaiting_save_preset {
@@ -255,9 +239,7 @@ fn main() -> ! {
                     } else {
                         for (div, mcp_pair) in mcps.iter_mut().enumerate() {
                             stop_state[div] = presets[i as usize][div];
-                            if write_stop_state_to_leds(&stop_state[div], mcp_pair).is_err() {
-                                bus_hang_detected = true;
-                            }
+                            write_stop_state_to_leds(&stop_state[div], mcp_pair).is_err();
                         }
                     }
                 }
@@ -299,24 +281,6 @@ fn main() -> ! {
             latch.set_high();
             arduino_hal::delay_us(5);
             latch.set_low();
-        }
-
-        // i2c bus recovery
-        if bus_hang_detected && bus_reset_retry_attempts < MAX_BUS_RESET_RETRIES {
-            // Un-stick the bus via hardware bypass
-            recover_i2c_bus();
-
-            // Loop through all chips, restore their IODIR configs, and write the current state back.
-            // After a certain number of retries we will give up!
-            for (div, mcp_pair) in mcps.iter_mut().enumerate() {
-                let res1 = config_mcp_pair(mcp_pair);
-                let res2 = write_stop_state_to_leds(&stop_state[div], mcp_pair);
-                if res1.is_ok() && res2.is_ok() {
-                    bus_hang_detected = false;
-                } else {
-                    bus_reset_retry_attempts += 1;
-                }
-            }
         }
 
         // I'd love to use async rust, but i'm not really sure how to do that on AVR yet. In the meantime, we'll just
